@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BLE Button",
+        "description": "Add a BLE advertisement button.",
+        "data": {
+          "method": "Setup method"
+        }
+      },
+      "discover": {
+        "title": "Add from recent BLE advertisements",
+        "description": "Scanning for {seconds} seconds. Press the BLE button now. Newest advertisements are shown at the top.",
+        "data": {
+          "discovered_device": "Discovered BLE device"
+        }
+      },
+      "confirm_discovered": {
+        "title": "Confirm BLE Button",
+        "description": "Detected device MAC: {mac}. Detected source adapter/proxy: {source}. RSSI: {rssi}. Payload is ignored.",
+        "data": {
+          "name": "Button name",
+          "source": "Bluetooth adapter/proxy",
+          "press_reset_delay": "Press visible time in seconds"
+        }
+      },
+      "manual": {
+        "title": "Add BLE Button Manually",
+        "description": "Add a BLE button by MAC address. Payload content is ignored.",
+        "data": {
+          "name": "Button name",
+          "mac": "Button MAC address",
+          "source": "Bluetooth adapter/proxy",
+          "press_reset_delay": "Press visible time in seconds"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid button MAC address. Use format AA:BB:CC:DD:EE:FF.",
+      "invalid_source": "Invalid adapter/source MAC address.",
+      "name_required": "Name is required.",
+      "invalid_reset_delay": "Press visible time must be greater than 0."
+    },
+    "abort": {
+      "already_configured": "This BLE button/source combination is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BLE Button options",
+        "description": "Edit settings for {name} ({mac}). Remove this button using the normal Home Assistant integration entry delete button.",
+        "data": {
+          "source": "Bluetooth adapter/proxy",
+          "press_reset_delay": "Press visible time in seconds"
+        }
+      }
+    },
+    "error": {
+      "invalid_source": "Invalid adapter/source MAC address.",
+      "invalid_reset_delay": "Press visible time must be greater than 0."
+    }
+  }
+}
