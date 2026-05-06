@@ -1,0 +1,8 @@
+{
+  "name": "BLE Button",
+  "render_readme": true,
+  "domains": [
+    "binary_sensor"
+  ],
+  "homeassistant": "2024.6.0"
+}
