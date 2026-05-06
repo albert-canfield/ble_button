@@ -12,7 +12,7 @@ This integration does **not** connect to the BLE device. It listens for Bluetoot
 - Add devices from recent BLE advertisements
 - Dynamic Bluetooth adapter/proxy selection
 - Works with Home Assistant Bluetooth adapters and BLE proxies
-- Binary sensor output: `off → on → off`
+- Text sensor output: `none → press → none`
 - Event output: `ble_button_press`
 - Payload-independent detection
 
