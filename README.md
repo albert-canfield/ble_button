@@ -78,8 +78,8 @@ Or add it by hand:
 
 ### Manual
 
-1. Download the latest release from the [releases page](https://github.com/albert-canfield/ble_button/releases).
-2. Copy `custom_components/ble_button` into `/config/custom_components/ble_button`.
+1. Download `ble_button.zip` from the [latest release](https://github.com/albert-canfield/ble_button/releases/latest).
+2. Unzip it into `/config/custom_components/`, so the files end up in `/config/custom_components/ble_button/`.
 3. Restart Home Assistant.
 
 > **Requirements:** Home Assistant **2025.1** or newer with the [Bluetooth integration](https://www.home-assistant.io/integrations/bluetooth/) set up, through a local adapter or an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html). The integration icon is shown on Home Assistant **2026.3+**.
@@ -211,7 +211,7 @@ BLE Button is **brand-independent**: it doesn't need to understand the advertise
 - **Multi-click:** presses are counted until the button stays quiet for the multi-click window: 1 = single, 2 = double, 3 or more = triple.
 - **Long press:** many buttons keep re-sending their packet while held. If the button is still transmitting **2 s** after a press, that's a long press. It's reported while you're still holding, and anything the button sends during the hold isn't counted as another press. This needs Home Assistant **2026.10+**, which exposes those repeats to integrations.
 
-**Button profiles** add accuracy for payload formats the integration recognises, on top of the generic rules. Currently there is one: the `0x5348` "HS" counter format. Its per-press counter recovers presses a proxy missed, and its own long-press flag also works on older Home Assistant. Unknown buttons simply use the generic rules. If you'd like your button to get a profile, open an issue with a diagnostics download.
+**Button profiles** add accuracy for payload formats the integration recognises, on top of the generic rules. Currently there is one: the **Aqara BLE button** (manufacturer data `0x5348`). Its per-press counter recovers presses a proxy missed, and its own long-press flag also works on older Home Assistant. Unknown buttons simply use the generic rules. If you'd like your button to get a profile, open an issue with a diagnostics download.
 
 > **Limits:** a button that sends a byte-identical advertisement on every press only registers its first press; there's nothing to tell presses apart. Long press needs a button that keeps transmitting while held (or a profile).
 
@@ -235,8 +235,7 @@ The old sensor entity is removed automatically. **Update automations** that used
 
 ## Tested hardware
 
-- Aqara BLE button
-- Buttons using the `0x5348` "HS" counter format (button profile, incl. native long press)
+- **Aqara BLE button**: instant and multi-click, with a button profile (exact press counter, native long press)
 
 Any device that sends a BLE advertisement when pressed should work. If yours does (or doesn't), please [open an issue](https://github.com/albert-canfield/ble_button/issues) so it can be added to this list.
 

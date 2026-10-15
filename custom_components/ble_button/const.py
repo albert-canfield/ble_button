@@ -32,7 +32,7 @@ HOLD_REPEAT_GAP = 1.0
 HOLD_MAX_EXTRA_WAIT = 10.0
 # Without per-advert tracking (HA < 2026.10), the click window for buttons
 # whose profile flags long presses is stretched past their long-press time
-# (~2.6 s for the hs_counter profile).
+# (~2.6 s for the Aqara / hs_counter profile).
 LONG_PRESS_FALLBACK_WINDOW = 3.5
 DEFAULT_DISCOVERY_SECONDS = 8
 DUPLICATE_WINDOW_SECONDS = 0.15
