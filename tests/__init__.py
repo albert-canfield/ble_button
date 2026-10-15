@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ble_button.const import (
     CONF_MAC,
+    CONF_MODE,
     CONF_PRESS_RESET_DELAY,
     CONF_SOURCE,
     DEFAULT_PRESS_RESET_DELAY,
@@ -33,6 +34,7 @@ PROXY = "C0:FF:EE:00:00:01"
 OTHER_PROXY = "C0:FF:EE:00:00:02"
 
 BINARY_ID = "binary_sensor.desk_button"
+CLICK_ID = "event.desk_button"
 LAST_PRESSED_ID = "sensor.desk_button_last_pressed"
 SIGNAL_ID = "sensor.desk_button_signal_strength"
 
@@ -47,14 +49,21 @@ def make_entry(
     source: str = SOURCE_ANY,
     name: str = BUTTON_NAME,
     reset_delay: float = DEFAULT_PRESS_RESET_DELAY,
+    mode: str | None = None,
 ) -> MockConfigEntry:
-    """Build a config entry shaped like the one the config flow creates."""
+    """Build a config entry shaped like the one the config flow creates.
+
+    Without ``mode`` the options look like a pre-3.0 entry (instant mode).
+    """
+    options: dict[str, Any] = {CONF_PRESS_RESET_DELAY: reset_delay}
+    if mode is not None:
+        options[CONF_MODE] = mode
     return MockConfigEntry(
         domain=DOMAIN,
         title=name,
         unique_id=f"{mac}_{source}",
         data={CONF_NAME: name, CONF_MAC: mac, CONF_SOURCE: source},
-        options={CONF_PRESS_RESET_DELAY: reset_delay},
+        options=options,
     )
 
 

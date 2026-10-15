@@ -36,6 +36,12 @@ def mock_entry() -> MockConfigEntry:
 
 
 @pytest.fixture
+def multi_click_entry() -> MockConfigEntry:
+    """A button in multi-click mode."""
+    return make_entry(mode="multi_click")
+
+
+@pytest.fixture
 def press_events(hass: HomeAssistant) -> list[Event]:
     """Capture ble_button_press events."""
     return async_capture_events(hass, "ble_button_press")

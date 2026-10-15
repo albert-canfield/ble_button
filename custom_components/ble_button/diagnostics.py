@@ -27,6 +27,9 @@ async def async_get_config_entry_diagnostics(
             "address": coordinator.address,
             "accepted_source": coordinator.accepted_source,
             "press_reset_delay": coordinator.press_reset_delay,
+            "mode": coordinator.mode,
+            "click_window": coordinator.click_window,
+            "tracks_every_advert": coordinator._clicks.tracks_activity,
         },
         "data": asdict(coordinator.data),
     }

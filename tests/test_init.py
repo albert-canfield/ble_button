@@ -28,6 +28,7 @@ from . import (
     PRESS_UID,
     PROXY,
     SIGNAL_ID,
+    CLICK_ID,
     SIGNAL_UID,
     get_device,
     inject_advertisement,
@@ -249,3 +250,27 @@ async def test_home_assistant_loads_translations(hass: HomeAssistant) -> None:
     assert config[f"component.{DOMAIN}.config.error.invalid_mac"].startswith(
         "Invalid button MAC address"
     )
+
+
+async def test_mode_switch_swaps_entities(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Options: instant -> multi-click replaces the binary sensor by the event."""
+    await setup_entry(hass, mock_entry)
+    entity_registry = er.async_get(hass)
+    assert entity_registry.async_get(BINARY_ID) is not None
+
+    result = await hass.config_entries.options.async_init(mock_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"mode": "multi_click", "source": "any"}
+    )
+    await hass.async_block_till_done()
+    assert mock_entry.options["mode"] == "multi_click"
+
+    ids = {
+        e.entity_id
+        for e in er.async_entries_for_config_entry(entity_registry, mock_entry.entry_id)
+    }
+    assert ids == {CLICK_ID, LAST_PRESSED_ID, SIGNAL_ID}
+    assert hass.states.get(BINARY_ID) is None
+    assert hass.states.get(CLICK_ID) is not None

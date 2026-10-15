@@ -12,6 +12,21 @@
       "last_pressed": {
         "default": "mdi:gesture-tap"
       }
+    },
+    "event": {
+      "click": {
+        "default": "mdi:gesture-tap-button",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "single": "mdi:gesture-tap",
+              "double": "mdi:gesture-double-tap",
+              "triple": "mdi:numeric-3-circle-outline",
+              "long": "mdi:gesture-tap-hold"
+            }
+          }
+        }
+      }
     }
   }
 }

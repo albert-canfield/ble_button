@@ -14,9 +14,12 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ble_button.const import (
+    CONF_CLICK_WINDOW,
     CONF_MAC,
+    CONF_MODE,
     CONF_PRESS_RESET_DELAY,
     CONF_SOURCE,
+    DEFAULT_CLICK_WINDOW,
     DEFAULT_DISCOVERY_SECONDS,
     DOMAIN,
     SOURCE_ANY,
@@ -62,7 +65,11 @@ async def test_manual_flow_creates_entry(hass: HomeAssistant) -> None:
         CONF_MAC: MAC,
         CONF_SOURCE: SOURCE_ANY,
     }
-    assert result["options"] == {CONF_PRESS_RESET_DELAY: 0.8}
+    assert result["options"] == {
+        CONF_MODE: "instant",
+        CONF_PRESS_RESET_DELAY: 0.8,
+        CONF_CLICK_WINDOW: DEFAULT_CLICK_WINDOW,
+    }
     assert result["result"].unique_id == f"{MAC}_{SOURCE_ANY}"
     assert result["result"].state is ConfigEntryState.LOADED
     assert hass.states.get("binary_sensor.desk_button").state == "off"

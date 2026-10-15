@@ -5,7 +5,7 @@
 # BLE Button for Home Assistant
 
 **Turn any cheap Bluetooth LE button into an instant, local Home Assistant trigger.**<br>
-No pairing. No GATT connection. No cloud. Just press.
+Single, double, triple and long press. No pairing. No GATT connection. No cloud.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://hacs.xyz/docs/faq/custom_repositories)
 [![Release](https://img.shields.io/github/v/release/albert-canfield/ble_button?style=for-the-badge&color=1f6feb)](https://github.com/albert-canfield/ble_button/releases)
@@ -27,32 +27,38 @@ No pairing. No GATT connection. No cloud. Just press.
 
 Plenty of inexpensive Bluetooth buttons (Aqara and friends) **broadcast an advertisement every time they are pressed**, but many have no Home Assistant integration, or need a vendor hub to work.
 
-BLE Button listens for those broadcasts through the Bluetooth stack Home Assistant already has, so **every adapter and ESPHome Bluetooth proxy in your home becomes a receiver**. A press becomes a clean `binary_sensor` pulse, a device trigger, and an event, ready for automations in under a second.
+BLE Button listens for those broadcasts through the Bluetooth stack Home Assistant already has, so **every adapter and ESPHome Bluetooth proxy in your home becomes a receiver**. Each button works either as an **instant trigger** or as a **multi-click button** with single, double, triple and long press, so one button can drive several actions.
 
 | | |
 |---|---|
 | 🔌 **Zero pairing** | Passive listening only. The button is never connected to, so its battery lasts as long as it would on its own. |
 | 📡 **Uses your existing Bluetooth** | Local adapters, ESPHome and other Bluetooth proxies. Optionally lock a button to one specific proxy. |
-| ⚡ **Local push** | No polling, no cloud, no vendor app. Presses arrive as fast as the advertisement does. |
-| 🧩 **Native Home Assistant entities** | A `binary_sensor` that reads **Pressed / Not pressed**, a **Last pressed** timestamp, signal strength, a **Button pressed** device trigger and diagnostics download. |
+| ⚡ **Instant mode** | Every press fires immediately, as fast as the advertisement arrives. |
+| 👆 **Multi-click mode** | **Single, double, triple and long press** from one button, with brand-independent detection. |
+| 🧩 **Native Home Assistant entities** | Binary sensor (**Pressed / Not pressed**) or event entity, **Last pressed**, signal strength, device triggers for every click type, and diagnostics download. |
 | 🔍 **Point-and-press setup** | Press the button during setup and pick it from a live list of nearby advertisements. No MAC hunting needed. |
 | 🛡️ **Debounced** | Duplicate advertisements from the same press (and from several proxies hearing it) count once. |
 
-## What you get in Home Assistant
+## Two modes: pick per button
 
-Each button you add becomes a **device** with these entities (example name: *Desk Button*):
+| | ⚡ **Instant** | 👆 **Multi-click** |
+|---|---|---|
+| Best for | One action per button, fastest response | Several actions on one button |
+| The button entity | `binary_sensor.desk_button`: **Pressed** for 0.6 s on every press | `event.desk_button`: **Single click**, **Double click**, **Triple click** or **Long press** |
+| Device triggers | *Button pressed* | *Single click*, *Double click*, *Triple click*, *Long press* |
+| Bus event | `ble_button_press` | `ble_button_click` (plus `ble_button_press` per press) |
+| Speed | Immediate | Clicks are reported once the button has been quiet for the multi-click window (2 s by default); a long press fires while you are still holding |
+
+You choose the mode when adding a button and can switch it any time under **Configure**. Buttons added before 3.0 stay in instant mode.
+
+Every button also gets:
 
 | Entity | Example ID | What it does |
 |---|---|---|
-| The button | `binary_sensor.desk_button` | `on` (**Pressed**) for a short pulse (0.6 s by default) on every press, otherwise `off` (**Not pressed**). |
 | Last pressed | `sensor.desk_button_last_pressed` | Timestamp of the last press. Kept across restarts. |
 | Signal strength | `sensor.desk_button_signal_strength` | RSSI of the last advertisement, in dBm. Diagnostic, **disabled by default**. |
 
-Plus:
-
-- **Device trigger:** *Button pressed*, selectable in the automation editor.
-- **Event:** `ble_button_press`, fired on every accepted press.
-- **Diagnostics:** listener counters and last-seen details, from *Device → ⋮ → Download diagnostics*.
+Plus **Download diagnostics** (listener counters and last-seen details) on the device page.
 
 ## Installation
 
@@ -91,8 +97,10 @@ For both you can set:
 
 | Option | Default | Description |
 |---|---|---|
+| Button mode | Instant | **Instant** (one fast trigger per press) or **Multi-click** (single / double / triple / long). |
 | Bluetooth adapter/proxy | Any | Accept presses heard by any adapter, or only by one specific adapter/proxy. |
-| Press visible time | `0.6` s | How long the entity stays **Pressed** after each press. |
+| Press visible time | `0.6` s | *Instant mode:* how long the entity stays **Pressed** after each press. |
+| Multi-click window | `2` s | *Multi-click mode:* quiet time after the last press before the click type is decided. Shorter is snappier; longer allows slower double clicks. |
 
 Both can be changed later from **Configure** on the integration entry.
 
@@ -100,9 +108,35 @@ Both can be changed later from **Configure** on the integration entry.
 
 ### From the UI (device trigger)
 
-*Settings → Automations → Create automation → Add trigger → **Device*** → pick your button → **Button pressed**.
+*Settings → Automations → Create automation → Add trigger → **Device*** → pick your button → **Button pressed** (instant mode) or **Single click / Double click / Triple click / Long press** (multi-click mode).
 
-### YAML: state trigger
+### YAML: multi-click
+
+```yaml
+alias: Desk button, one button many actions
+mode: queued
+triggers:
+  - trigger: event
+    event_type: ble_button_click
+    event_data:
+      name: Desk Button
+actions:
+  - choose:
+      - conditions: "{{ trigger.event.data.click_type == 'single' }}"
+        sequence:
+          - action: light.toggle
+            target: { entity_id: light.living_room_lamp }
+      - conditions: "{{ trigger.event.data.click_type == 'double' }}"
+        sequence:
+          - action: scene.turn_on
+            target: { entity_id: scene.movie_night }
+      - conditions: "{{ trigger.event.data.click_type == 'long' }}"
+        sequence:
+          - action: light.turn_off
+            target: { entity_id: all }
+```
+
+### YAML: instant mode, state trigger
 
 ```yaml
 alias: Desk button toggles the lamp
@@ -117,7 +151,7 @@ actions:
       entity_id: light.living_room_lamp
 ```
 
-### YAML: event trigger
+### YAML: instant mode, event trigger
 
 ```yaml
 alias: Any BLE button press
@@ -131,6 +165,18 @@ actions:
     target:
       entity_id: light.living_room_lamp
 ```
+
+<details>
+<summary><b><code>ble_button_click</code> event data</b></summary>
+
+| Key | Example | Description |
+|---|---|---|
+| `device_id` | `3f2c…` | Home Assistant device ID of the button |
+| `name` | `Desk Button` | Name you gave the button |
+| `mac` | `54:EF:44:12:34:56` | Button MAC address |
+| `click_type` | `double` | `single`, `double`, `triple` or `long` |
+
+</details>
 
 <details>
 <summary><b><code>ble_button_press</code> event data</b></summary>
@@ -159,7 +205,15 @@ flowchart LR
     I -- "yes" --> E["ble_button_press event<br/>+ device trigger"]
 ```
 
-The advertisement **payload is ignored**. Detection is based on the button's MAC address, optionally narrowed to one adapter/proxy. Advertisements arriving within 150 ms of an accepted press are treated as the same press.
+BLE Button is **brand-independent**: it doesn't need to understand the advertisement payload.
+
+- **A press** is an advertisement from the button's MAC (optionally only via one adapter/proxy) whose content changed. Most buttons change something per press, such as a counter. Home Assistant hides the identical repeats a button sends for each press, and repeats within 150 ms count once.
+- **Multi-click:** presses are counted until the button stays quiet for the multi-click window: 1 = single, 2 = double, 3 or more = triple.
+- **Long press:** many buttons keep re-sending their packet while held. If the button is still transmitting **2 s** after a press, that's a long press. It's reported while you're still holding, and anything the button sends during the hold isn't counted as another press. This needs Home Assistant **2026.10+**, which exposes those repeats to integrations.
+
+**Button profiles** add accuracy for payload formats the integration recognises, on top of the generic rules. Currently there is one: the `0x5348` "HS" counter format. Its per-press counter recovers presses a proxy missed, and its own long-press flag also works on older Home Assistant. Unknown buttons simply use the generic rules. If you'd like your button to get a profile, open an issue with a diagnostics download.
+
+> **Limits:** a button that sends a byte-identical advertisement on every press only registers its first press; there's nothing to tell presses apart. Long press needs a button that keeps transmitting while held (or a profile).
 
 ## Troubleshooting
 
@@ -169,7 +223,7 @@ The advertisement **payload is ignored**. Detection is based on the button's MAC
 
 ## Upgrading from 2.x
 
-Version 3.0 replaces the old text sensor (`none` / `press`) with a proper binary sensor:
+Existing buttons keep working in **instant mode**. Switch them to multi-click under **Configure** if you like. Version 3.0 also replaces the old text sensor (`none` / `press`) with a proper binary sensor:
 
 | | 2.x | 3.0 |
 |---|---|---|
@@ -182,6 +236,7 @@ The old sensor entity is removed automatically. **Update automations** that used
 ## Tested hardware
 
 - Aqara BLE button
+- Buttons using the `0x5348` "HS" counter format (button profile, incl. native long press)
 
 Any device that sends a BLE advertisement when pressed should work. If yours does (or doesn't), please [open an issue](https://github.com/albert-canfield/ble_button/issues) so it can be added to this list.
 

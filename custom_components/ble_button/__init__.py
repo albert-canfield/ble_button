@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_MAC, CONF_SOURCE, DOMAIN, PLATFORMS, SOURCE_ANY
 from .coordinator import BleButtonCoordinator
-from .entity import entity_unique_id
+from .entity import MODE_ENTITIES, entry_mode, entry_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,17 +29,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Up to v2.x the press entity was a text sensor (none/press). It is a
-    # binary sensor now; drop the orphaned sensor entity from the registry.
+    # Drop entities this button's mode doesn't create: the other mode's
+    # entity after switching modes, and the v2.x text sensor (none/press).
     ent_reg = er.async_get(hass)
-    source = entry.data.get(CONF_SOURCE, SOURCE_ANY)
-    old_unique_id = entity_unique_id(
-        entry.data[CONF_MAC].upper(),
-        source if source == SOURCE_ANY else source.upper(),
-        "press",
-    )
-    if old_entity_id := ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, old_unique_id):
-        ent_reg.async_remove(old_entity_id)
+    wanted = {
+        (platform, entry_unique_id(entry, key))
+        for platform, key in MODE_ENTITIES[entry_mode(entry)]
+    }
+    for entity_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if (entity_entry.domain, entity_entry.unique_id) not in wanted:
+            ent_reg.async_remove(entity_entry.entity_id)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
