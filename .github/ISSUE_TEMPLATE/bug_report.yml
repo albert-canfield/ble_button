@@ -1,0 +1,56 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: BLE Button version
+      placeholder: "3.0.0"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.10.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Button make / model
+      placeholder: "Aqara BLE button"
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: How does Home Assistant receive Bluetooth?
+      options:
+        - Local USB / built-in adapter
+        - ESPHome Bluetooth proxy
+        - Shelly Bluetooth proxy
+        - Other / not sure
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >
+        Settings → Devices & services → BLE Button → your button's device → ⋮ →
+        Download diagnostics. Paste the JSON (the *_hits and ignored_* counters
+        and last_path help a lot).
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug logs
+      description: >
+        Settings → Devices & services → BLE Button → ⋮ → Enable debug logging,
+        press the button a few times, then disable it and paste the log here.
+      render: text
