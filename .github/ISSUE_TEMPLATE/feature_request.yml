@@ -1,0 +1,14 @@
+name: Feature request
+description: Suggest an idea or a new supported button
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like BLE Button to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it useful?

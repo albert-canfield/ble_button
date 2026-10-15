@@ -21,7 +21,13 @@
         "data": {
           "name": "Button name",
           "source": "Bluetooth adapter/proxy",
-          "press_reset_delay": "Press visible time in seconds"
+          "press_reset_delay": "Press visible time in seconds (instant mode)",
+          "click_window": "Multi-click window in seconds (multi-click mode)",
+          "mode": "Button mode"
+        },
+        "data_description": {
+          "click_window": "Quiet time after the last press before a single, double or triple click is reported.",
+          "mode": "Instant: every press switches the binary sensor on straight away. Multi-click: single, double, triple and long press, reported once the multi-click window has passed."
         }
       },
       "manual": {
@@ -31,7 +37,13 @@
           "name": "Button name",
           "mac": "Button MAC address",
           "source": "Bluetooth adapter/proxy",
-          "press_reset_delay": "Press visible time in seconds"
+          "press_reset_delay": "Press visible time in seconds (instant mode)",
+          "click_window": "Multi-click window in seconds (multi-click mode)",
+          "mode": "Button mode"
+        },
+        "data_description": {
+          "click_window": "Quiet time after the last press before a single, double or triple click is reported.",
+          "mode": "Instant: every press switches the binary sensor on straight away. Multi-click: single, double, triple and long press, reported once the multi-click window has passed."
         }
       }
     },
@@ -39,7 +51,8 @@
       "invalid_mac": "Invalid button MAC address. Use format AA:BB:CC:DD:EE:FF.",
       "invalid_source": "Invalid adapter/source MAC address.",
       "name_required": "Name is required.",
-      "invalid_reset_delay": "Press visible time must be greater than 0."
+      "invalid_reset_delay": "Press visible time must be greater than 0.",
+      "invalid_click_window": "Multi-click window must be greater than 0."
     },
     "abort": {
       "already_configured": "This BLE button/source combination is already configured."
@@ -52,13 +65,67 @@
         "description": "Edit settings for {name} ({mac}). Remove this button using the normal Home Assistant integration entry delete button.",
         "data": {
           "source": "Bluetooth adapter/proxy",
-          "press_reset_delay": "Press visible time in seconds"
+          "press_reset_delay": "Press visible time in seconds (instant mode)",
+          "click_window": "Multi-click window in seconds (multi-click mode)",
+          "mode": "Button mode"
+        },
+        "data_description": {
+          "click_window": "Quiet time after the last press before a single, double or triple click is reported.",
+          "mode": "Instant: every press switches the binary sensor on straight away. Multi-click: single, double, triple and long press, reported once the multi-click window has passed."
         }
       }
     },
     "error": {
       "invalid_source": "Invalid adapter/source MAC address.",
-      "invalid_reset_delay": "Press visible time must be greater than 0."
+      "invalid_reset_delay": "Press visible time must be greater than 0.",
+      "invalid_click_window": "Multi-click window must be greater than 0."
+    }
+  },
+  "selector": {
+    "mode": {
+      "options": {
+        "instant": "Instant: one fast trigger per press",
+        "multi_click": "Multi-click: single, double, triple and long press"
+      }
+    }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "press": "Button pressed",
+      "single": "Single click",
+      "double": "Double click",
+      "triple": "Triple click",
+      "long": "Long press"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "press": {
+        "state": {
+          "off": "Not pressed",
+          "on": "Pressed"
+        }
+      }
+    },
+    "sensor": {
+      "last_pressed": {
+        "name": "Last pressed"
+      }
+    },
+    "event": {
+      "click": {
+        "name": "Click",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "single": "Single click",
+              "double": "Double click",
+              "triple": "Triple click",
+              "long": "Long press"
+            }
+          }
+        }
+      }
     }
   }
 }

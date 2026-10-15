@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLE Button Hero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=block" rel="stylesheet">
+<!--
+  BLE Button for Home Assistant: README hero scene.
+  Open directly in Chrome to preview the 6 s loop.
+  Query params:  ?mode=social  (1280x640 social card)   ?t=1400  (freeze at ms)   ?pose=hero  (story pose)
+  render.mjs pauses every animation and seeks document.getAnimations() per frame.
+-->
+<style>
+  :root {
+    --bg-0: #060912;
+    --bg-1: #0a1020;
+    --ink: #eef2f8;
+    --ink-2: #a3adbf;
+    --ink-3: #6f7a8e;
+    --line: rgba(255, 255, 255, 0.075);
+    --card: #121722;
+    --card-2: #161c29;
+    --accent: #2f8cff;
+    --accent-hi: #7cbcff;
+    --warm: #ffc547;
+    --warm-hi: #ffe2a0;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg-0); }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+
+  /* ---------- stage ---------- */
+  #stage {
+    position: relative;
+    width: 960px;
+    height: 480px;
+    overflow: hidden;
+    background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+  }
+  #scene { position: absolute; left: 0; top: 0; width: 960px; height: 480px; transform-origin: 0 0; }
+  .glow {
+    position: absolute; left: -240px; top: -240px; width: 1440px; height: 960px; pointer-events: none;
+    background:
+      radial-gradient(520px 360px at 472px 540px, rgba(36, 112, 255, 0.20), rgba(36, 112, 255, 0) 70%),
+      radial-gradient(640px 420px at 1000px 470px, rgba(92, 120, 190, 0.10), rgba(92, 120, 190, 0) 70%);
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1.3px);
+    background-size: 24px 24px;
+    background-position: 12px 12px;
+    -webkit-mask-image: radial-gradient(70% 75% at 50% 50%, #000 30%, transparent 100%);
+            mask-image: radial-gradient(70% 75% at 50% 50%, #000 30%, transparent 100%);
+  }
+  .warm-wash {
+    position: absolute;
+    left: 520px; top: 70px; width: 520px; height: 420px;
+    background: radial-gradient(closest-side, rgba(255, 186, 72, 0.15), rgba(255, 186, 72, 0) 100%);
+    opacity: 0;
+  }
+  .vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 120% at 50% 45%, transparent 60%, rgba(0, 0, 0, 0.35) 100%);
+  }
+
+  /* ---------- brand ---------- */
+  .brand {
+    position: absolute; left: 40px; top: 30px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .brand .logo {
+    width: 42px; height: 42px; border-radius: 11px; overflow: hidden; flex: none;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.10), 0 8px 24px rgba(10, 60, 180, 0.35);
+    background: #e9eef5;
+  }
+  .brand .logo img { width: 100%; height: 100%; object-fit: cover; transform: scale(1.12); display: block; }
+  .brand .name { font-size: 21px; line-height: 24px; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; }
+  .brand .name span { font-weight: 400; color: var(--ink-2); }
+  .brand .tag { margin-top: 4px; font-size: 13.5px; line-height: 16px; color: var(--ink-3); letter-spacing: -0.005em; white-space: nowrap; }
+  .brand .tag b { font-weight: 500; color: var(--ink-2); }
+  .brand .tag i { font-style: normal; color: var(--accent-hi); padding: 0 2px; }
+
+  /* ---------- scene svg ---------- */
+  svg.scene { position: absolute; left: 0; top: 0; width: 960px; height: 480px; overflow: visible; }
+  svg .tf { transform-box: fill-box; transform-origin: 50% 50%; }
+  svg .arc { fill: none; stroke: var(--accent-hi); stroke-width: 2.4; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: 0; }
+  svg .arc.back { stroke: #5c9ff0; stroke-width: 2; }
+
+  svg .path-label {
+    font: 500 9.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+    fill: rgba(150, 190, 245, 0.62);
+  }
+
+  .packet {
+    position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%;
+    offset-path: path("M350 258 C 420 258, 446 194, 512 194");
+    offset-rotate: 0deg; offset-anchor: 50% 50%; offset-distance: 0%;
+    background: radial-gradient(circle at 40% 40%, #ffffff 0%, #bfe0ff 35%, #4a9cff 70%);
+    box-shadow: 0 0 10px 3px rgba(80, 160, 255, 0.85), 0 0 24px 8px rgba(47, 140, 255, 0.35);
+    opacity: 0;
+  }
+
+  /* ---------- HA-style card ---------- */
+  .eyebrow {
+    position: absolute; left: 524px; top: 132px;
+    display: flex; align-items: center; gap: 8px;
+    font: 600 10.5px/1 var(--sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: #3ecf8e; box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.15); }
+  .card {
+    position: absolute; left: 520px; top: 154px; width: 400px;
+    padding: 8px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, var(--card-2), var(--card));
+    box-shadow:
+      0 0 0 1px var(--line),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05),
+      0 24px 60px -12px rgba(0, 0, 0, 0.65),
+      0 8px 20px -8px rgba(0, 0, 0, 0.5);
+  }
+  .card-glow {
+    position: absolute; inset: -1px; border-radius: 17px; pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(80, 160, 255, 0.55), 0 0 28px 2px rgba(47, 140, 255, 0.25);
+    opacity: 0;
+  }
+  .row {
+    position: relative; height: 64px; padding: 0 16px 0 12px;
+    display: flex; align-items: center; gap: 14px; border-radius: 11px;
+  }
+  .row + .row::before {
+    content: ""; position: absolute; left: 66px; right: 16px; top: 0; height: 1px; background: var(--line);
+  }
+  .row .hl {
+    position: absolute; inset: 0; border-radius: 11px; opacity: 0;
+    background: linear-gradient(90deg, rgba(47, 140, 255, 0.20), rgba(47, 140, 255, 0.07) 60%, rgba(47, 140, 255, 0.12));
+    box-shadow: inset 0 0 0 1px rgba(90, 165, 255, 0.35);
+  }
+  .row .hl.warm {
+    background: radial-gradient(220px 90px at 32px 50%, rgba(255, 190, 70, 0.16), rgba(255, 190, 70, 0) 100%);
+    box-shadow: none;
+  }
+  .ico {
+    position: relative; width: 40px; height: 40px; flex: none;
+    display: grid; place-items: center; border-radius: 50%;
+    background: rgba(255, 255, 255, 0.045);
+  }
+  .ico > * { grid-area: 1 / 1; }
+  .ico svg { width: 24px; height: 24px; display: block; }
+  .ico .halo { width: 40px; height: 40px; border-radius: 50%; opacity: 0; }
+  .ico .halo.blue { background: radial-gradient(closest-side, rgba(47, 140, 255, 0.55), rgba(47, 140, 255, 0)); transform: scale(1.5); }
+  .ico .halo.warm { background: radial-gradient(closest-side, rgba(255, 196, 70, 0.75), rgba(255, 196, 70, 0)); transform: scale(1.7); }
+  .ico .i-rest { fill: #8b95a8; }
+  .ico .i-on { fill: #4ea2ff; opacity: 0; filter: drop-shadow(0 0 6px rgba(47, 140, 255, 0.9)); }
+  .ico .i-on.warm { fill: var(--warm); filter: drop-shadow(0 0 8px rgba(255, 190, 60, 0.95)); }
+  .meta { flex: 1; min-width: 0; position: relative; }
+  .meta .nm { font-size: 15px; line-height: 19px; font-weight: 550; letter-spacing: -0.01em; color: var(--ink); }
+  .meta .id { margin-top: 3px; font: 400 11px/14px var(--mono); color: var(--ink-3); letter-spacing: -0.01em; }
+  .state { position: relative; display: grid; justify-items: end; align-items: center; min-width: 110px; }
+  .state > span { grid-area: 1 / 1; font-size: 14px; line-height: 18px; font-weight: 500; white-space: nowrap; }
+  .state .s-rest { color: var(--ink-2); }
+  .state .s-on { color: var(--accent-hi); font-weight: 650; opacity: 0; text-shadow: 0 0 14px rgba(47, 140, 255, 0.85); }
+  .state .s-on.warm { color: var(--warm-hi); text-shadow: 0 0 14px rgba(255, 190, 60, 0.6); }
+  .lamp-ctl { display: flex; align-items: center; gap: 12px; }
+  .lamp-ctl .state { min-width: 30px; }
+  .switch { position: relative; width: 36px; height: 20px; flex: none; }
+  .switch .track { position: absolute; inset: 3px 0; border-radius: 7px; background: rgba(255, 255, 255, 0.22); }
+  .switch .track-on { position: absolute; inset: 3px 0; border-radius: 7px; background: rgba(47, 140, 255, 0.55); opacity: 0; }
+  .switch .thumb {
+    position: absolute; left: -2px; top: 0; width: 20px; height: 20px; border-radius: 50%;
+    background: #d5dae3; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+  .switch .thumb-on { position: absolute; inset: 0; border-radius: 50%; background: var(--accent); opacity: 0; }
+
+
+  /* ---------- toast ---------- */
+  .toast {
+    position: absolute; left: 520px; top: 322px; height: 40px;
+    display: flex; align-items: center; gap: 10px; padding: 0 14px 0 10px;
+    border-radius: 12px;
+    background: rgba(20, 26, 38, 0.92);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 14px 30px -10px rgba(0, 0, 0, 0.7);
+    font-size: 13px; line-height: 1; white-space: nowrap;
+    opacity: 0;
+  }
+  .toast .t-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: rgba(47, 140, 255, 0.16); }
+  .toast .t-ico svg { width: 15px; height: 15px; fill: var(--accent-hi); display: block; }
+  .toast b { font-weight: 600; color: var(--ink); }
+  .toast .sep { color: var(--ink-3); }
+  .toast .act { color: var(--ink-2); }
+  .toast code {
+    font: 500 10.5px/1 var(--mono); color: #9cc8ff; padding: 4px 6px; border-radius: 6px;
+    background: rgba(47, 140, 255, 0.10); box-shadow: inset 0 0 0 1px rgba(90, 165, 255, 0.18);
+  }
+
+  /* ---------- chips ---------- */
+  .chips {
+    position: absolute; left: 0; right: 0; bottom: 30px;
+    display: flex; justify-content: center; gap: 10px;
+  }
+  .chip {
+    display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px 0 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.075);
+    font-size: 12.5px; font-weight: 500; color: #b4bdcc; letter-spacing: -0.005em; white-space: nowrap;
+  }
+  .chip svg { width: 14px; height: 14px; fill: var(--accent-hi); opacity: 0.9; display: block; }
+  .chip-sep { width: 3px; height: 3px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); align-self: center; }
+
+  /* ---------- social mode (1280x640) ---------- */
+  body.social #stage { width: 1280px; height: 640px; }
+  body.social .brand { display: none; }
+  body.social #scene { transform: translate(28px, 70px) scale(1.18); }
+  body.social .chips { bottom: 46px; gap: 12px; }
+  body.social .chip { height: 36px; font-size: 15.5px; padding: 0 16px 0 13px; gap: 9px; }
+  body.social .chip svg { width: 17px; height: 17px; }
+  .social-head { display: none; }
+  body.social .social-head {
+    display: flex; flex-direction: column; align-items: center;
+    position: absolute; left: 0; right: 0; top: 58px;
+  }
+  .social-head .row1 { display: flex; align-items: center; gap: 20px; }
+  .social-head .logo { width: 60px; height: 60px; border-radius: 15px; overflow: hidden; background: #e9eef5; flex: none;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 10px 30px rgba(10, 60, 180, 0.4); }
+  .social-head .logo img { width: 100%; height: 100%; object-fit: cover; transform: scale(1.12); display: block; }
+  .social-head h1 { margin: 0; font-size: 54px; line-height: 1; font-weight: 750; letter-spacing: -0.04em; white-space: nowrap; }
+  .social-head h1 span { font-weight: 400; color: var(--ink-2); letter-spacing: -0.035em; }
+  .social-head p { margin: 18px 0 0; font-size: 22px; line-height: 1.3; color: var(--ink-3); letter-spacing: -0.012em; }
+  .social-head p b { font-weight: 500; color: var(--ink-2); }
+  .social-head p i { font-style: normal; color: var(--accent-hi); padding: 0 3px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="grid"></div>
+
+  <div class="brand">
+    <div class="logo"><img src="../../custom_components/ble_button/brand/icon@2x.png" alt=""></div>
+    <div>
+      <div class="name">BLE Button <span>for Home Assistant</span></div>
+      <div class="tag"><b>Any BLE button</b> <i>&rarr;</i> instant automation trigger</div>
+    </div>
+  </div>
+
+  <div class="social-head">
+    <div class="row1">
+      <div class="logo"><img src="../../custom_components/ble_button/brand/icon@2x.png" alt=""></div>
+      <h1>BLE Button <span>for Home Assistant</span></h1>
+    </div>
+    <p><b>Any BLE button</b> <i>&rarr;</i> instant automation trigger</p>
+  </div>
+
+  <div id="scene">
+    <div class="glow"></div>
+    <div class="warm-wash" id="warmWash"></div>
+    <svg class="scene" viewBox="0 0 960 480" aria-hidden="true">
+      <defs>
+        <linearGradient id="sideGrad" gradientUnits="userSpaceOnUse" x1="122" y1="0" x2="338" y2="0">
+          <stop offset="0" stop-color="#0a379a"/>
+          <stop offset="0.16" stop-color="#1252c9"/>
+          <stop offset="0.40" stop-color="#2671ee"/>
+          <stop offset="0.58" stop-color="#1d63e0"/>
+          <stop offset="0.84" stop-color="#0f45b6"/>
+          <stop offset="1" stop-color="#072c82"/>
+        </linearGradient>
+        <linearGradient id="sideShade" gradientUnits="userSpaceOnUse" x1="0" y1="270" x2="0" y2="342">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+          <stop offset="0.45" stop-color="#000000" stop-opacity="0"/>
+          <stop offset="1" stop-color="#00103a" stop-opacity="0.42"/>
+        </linearGradient>
+        <linearGradient id="sideSpec" gradientUnits="userSpaceOnUse" x1="122" y1="0" x2="338" y2="0">
+          <stop offset="0.08" stop-color="#ffffff" stop-opacity="0"/>
+          <stop offset="0.24" stop-color="#ffffff" stop-opacity="0.13"/>
+          <stop offset="0.36" stop-color="#ffffff" stop-opacity="0"/>
+          <stop offset="0.86" stop-color="#9fd0ff" stop-opacity="0"/>
+          <stop offset="0.95" stop-color="#9fd0ff" stop-opacity="0.10"/>
+          <stop offset="1" stop-color="#9fd0ff" stop-opacity="0"/>
+        </linearGradient>
+        <radialGradient id="topGrad" cx="0.42" cy="0.36" r="0.78">
+          <stop offset="0" stop-color="#64b1ff"/>
+          <stop offset="0.42" stop-color="#3488f7"/>
+          <stop offset="0.82" stop-color="#1f6be2"/>
+          <stop offset="1" stop-color="#1a60d4"/>
+        </radialGradient>
+        <linearGradient id="rimGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#9fd0ff" stop-opacity="0.15"/>
+          <stop offset="0.55" stop-color="#9fd0ff" stop-opacity="0.25"/>
+          <stop offset="1" stop-color="#c8e4ff" stop-opacity="0.95"/>
+        </linearGradient>
+        <linearGradient id="rimHi" gradientUnits="userSpaceOnUse" x1="139" y1="0" x2="262" y2="0">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+          <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.75"/>
+          <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+        </linearGradient>
+        <filter id="blur1" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="0.9"/></filter>
+        <radialGradient id="gloss" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+          <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+        </radialGradient>
+        <radialGradient id="floorGlow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="#2f7dff" stop-opacity="0.55"/>
+          <stop offset="0.55" stop-color="#2f7dff" stop-opacity="0.16"/>
+          <stop offset="1" stop-color="#2f7dff" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="dotFade" gradientUnits="userSpaceOnUse" x1="350" y1="0" x2="512" y2="0">
+          <stop offset="0" stop-color="#7cbcff" stop-opacity="0"/>
+          <stop offset="0.25" stop-color="#7cbcff" stop-opacity="0.42"/>
+          <stop offset="0.8" stop-color="#7cbcff" stop-opacity="0.42"/>
+          <stop offset="1" stop-color="#7cbcff" stop-opacity="0.15"/>
+        </linearGradient>
+        <filter id="blur10" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter>
+        <filter id="blur4" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+        <filter id="blur2" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2"/></filter>
+        <filter id="arcGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2.2" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <clipPath id="topClip"><ellipse cx="230" cy="252" rx="105" ry="40.5"/></clipPath>
+        <path id="bleArc" d="M122 285 A108 42 0 0 0 338 285"/>
+      </defs>
+
+      <!-- advertisement arcs (behind the puck) -->
+      <g filter="url(#arcGlow)">
+        <path class="arc back" id="arcL1" d="M -78.8 -61.6 A 100 100 0 0 0 -78.8 61.6"/>
+        <path class="arc back" id="arcL2" d="M -78.8 -61.6 A 100 100 0 0 0 -78.8 61.6"/>
+        <path class="arc back" id="arcL3" d="M -78.8 -61.6 A 100 100 0 0 0 -78.8 61.6"/>
+        <path class="arc" id="arcR1" d="M 78.8 -61.6 A 100 100 0 0 1 78.8 61.6"/>
+        <path class="arc" id="arcR2" d="M 78.8 -61.6 A 100 100 0 0 1 78.8 61.6"/>
+        <path class="arc" id="arcR3" d="M 78.8 -61.6 A 100 100 0 0 1 78.8 61.6"/>
+      </g>
+
+      <!-- dotted advertisement path -->
+      <path id="advPath" d="M350 258 C 420 258, 446 194, 512 194" fill="none" stroke="url(#dotFade)" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="0 7"/>
+      <text class="path-label" dy="-10"><textPath href="#advPath" startOffset="97%" text-anchor="end">BLE advertisement</textPath></text>
+      <g filter="url(#blur2)">
+        <path id="trailA" d="M350 258 C 420 258, 446 194, 512 194" pathLength="100" fill="none" stroke="#4f9dff" stroke-width="4" stroke-linecap="round" stroke-dasharray="16 300" stroke-dashoffset="16" opacity="0"/>
+      </g>
+      <path id="trailB" d="M350 258 C 420 258, 446 194, 512 194" pathLength="100" fill="none" stroke="#a9d3ff" stroke-width="2" stroke-linecap="round" stroke-dasharray="8 300" stroke-dashoffset="8" opacity="0"/>
+
+      <g transform="translate(0 -12)">
+      <!-- floor -->
+      <ellipse id="floorGlow" class="tf" cx="230" cy="338" rx="190" ry="46" fill="url(#floorGlow)"/>
+      <ellipse id="shadow" class="tf" cx="230" cy="346" rx="118" ry="15" fill="#000510" opacity="0.65" filter="url(#blur10)"/>
+      <ellipse id="shadowCore" class="tf" cx="230" cy="343" rx="104" ry="8" fill="#00030a" opacity="0.55" filter="url(#blur4)"/>
+
+      <!-- puck -->
+      <g id="puck" style="transform-box: view-box; transform-origin: 230px 342px;">
+        <!-- upper side piece: travels with the cap -->
+        <g id="capSide">
+          <rect x="122" y="252" width="216" height="32" fill="url(#sideGrad)"/>
+        </g>
+        <!-- lower side (static) -->
+        <path d="M122 278 L122 300 A108 42 0 0 0 338 300 L338 278 Z" fill="url(#sideGrad)"/>
+        <path d="M122 270 L122 300 A108 42 0 0 0 338 300 L338 270 Z" fill="url(#sideShade)"/>
+        <!-- base foot -->
+        <path d="M122 294 L122 300 A108 42 0 0 0 338 300 L338 294 A108 42 0 0 1 122 294 Z" fill="#06205e" opacity="0.85"/>
+        <path d="M128 300 A102 40 0 0 0 332 300" fill="none" stroke="#5c9cff" stroke-opacity="0.18" stroke-width="1"/>
+        <path d="M122 270 L122 300 A108 42 0 0 0 338 300 L338 270 Z" fill="url(#sideSpec)"/>
+        <!-- BLE lettering -->
+        <text font-family="Inter, sans-serif" font-size="23" font-weight="800" letter-spacing="3" fill="#00134a" opacity="0.35" transform="translate(0 1.4)"><textPath href="#bleArc" startOffset="50%" text-anchor="middle">BLE</textPath></text>
+        <text font-family="Inter, sans-serif" font-size="23" font-weight="800" letter-spacing="3" fill="#f4f8ff"><textPath href="#bleArc" startOffset="50%" text-anchor="middle">BLE</textPath></text>
+
+        <!-- cap (top face) -->
+        <g id="cap">
+          <ellipse cx="230" cy="252" rx="108" ry="42" fill="#1550c0"/>
+          <ellipse cx="230" cy="252" rx="108" ry="42" fill="none" stroke="url(#rimGrad)" stroke-width="1.6"/>
+          <ellipse cx="230" cy="251" rx="104" ry="39.5" fill="url(#topGrad)"/>
+          <g clip-path="url(#topClip)">
+            <ellipse cx="196" cy="234" rx="70" ry="20" fill="url(#gloss)" opacity="0.55"/>
+            <ellipse cx="230" cy="286" rx="120" ry="22" fill="#0a3ea8" opacity="0.35" filter="url(#blur4)"/>
+            <ellipse id="ripple" class="tf" cx="230" cy="252" rx="12" ry="4.6" fill="none" stroke="#ffffff" stroke-width="2" style="vector-effect: non-scaling-stroke" opacity="0"/>
+            <ellipse id="ripple2" class="tf" cx="230" cy="252" rx="12" ry="4.6" fill="none" stroke="#cfe6ff" stroke-width="1.4" style="vector-effect: non-scaling-stroke" opacity="0"/>
+            <ellipse id="flash" cx="230" cy="252" rx="104" ry="40" fill="#bfe0ff" opacity="0"/>
+          </g>
+          <path d="M139 236 A104 39.5 0 0 1 262 212.2" fill="none" stroke="url(#rimHi)" stroke-width="2" stroke-linecap="round" filter="url(#blur1)"/>
+          <g id="runeGlow" opacity="0" filter="url(#blur4)" transform="translate(230 251) scale(2.95 1.95) translate(-11.355 -12)">
+            <path d="M14.88,16.29L13,18.17V14.41M13,5.83L14.88,7.71L13,9.58M17.71,7.71L12,2H11V9.58L6.41,5L5,6.41L10.59,12L5,17.58L6.41,19L11,14.41V22H12L17.71,16.29L13.41,12L17.71,7.71Z" fill="#e8f4ff" stroke="#e8f4ff" stroke-width="1.2"/>
+          </g>
+          <!-- bluetooth rune -->
+          <g transform="translate(230 251) scale(2.95 1.95) translate(-11.355 -12)">
+            <path d="M14.88,16.29L13,18.17V14.41M13,5.83L14.88,7.71L13,9.58M17.71,7.71L12,2H11V9.58L6.41,5L5,6.41L10.59,12L5,17.58L6.41,19L11,14.41V22H12L17.71,16.29L13.41,12L17.71,7.71Z" fill="#0b3b9e" opacity="0.55" transform="translate(0 0.9)"/>
+            <path d="M14.88,16.29L13,18.17V14.41M13,5.83L14.88,7.71L13,9.58M17.71,7.71L12,2H11V9.58L6.41,5L5,6.41L10.59,12L5,17.58L6.41,19L11,14.41V22H12L17.71,16.29L13.41,12L17.71,7.71Z" fill="#ffffff"/>
+          </g>
+        </g>
+      </g>
+      </g>
+    </svg>
+
+    <div class="packet" id="packet"></div>
+
+    <div class="eyebrow"><span class="dot"></span>Home Assistant &middot; Dashboard</div>
+    <div class="card">
+      <div class="card-glow" id="cardGlow"></div>
+      <div class="row" id="rowPress">
+        <div class="hl" id="pressHl"></div>
+        <div class="ico">
+          <div class="halo blue" id="pressHalo"></div>
+          <svg viewBox="0 0 24 24" class="i-rest" id="pressIcoRest"><path d="M13 5C15.21 5 17 6.790 17 9C17 10.5 16.2 11.77 15 12.46V11.24C15.61 10.69 16 9.89 16 9C16 7.34 14.66 6 13 6S10 7.34 10 9C10 9.89 10.39 10.69 11 11.24V12.46C9.8 11.77 9 10.5 9 9C9 6.79 10.79 5 13 5M20 20.5C19.970 21.32 19.32 21.97 18.5 22H13C12.62 22 12.26 21.85 12 21.57L8 17.37L8.74 16.6C8.93 16.39 9.2 16.28 9.5 16.28H9.7L12 18V9C12 8.45 12.45 8 13 8S14 8.45 14 9V13.47L15.21 13.6L19.15 15.79C19.68 16.03 20 16.56 20 17.14V20.5M20 2H4C2.9 2 2 2.9 2 4V12C2 13.11 2.9 14 4 14H8V12L4 12L4 4H20L20 12H18V14H20V13.96L20.040 14C21.13 14 22 13.09 22 12V4C22 2.9 21.11 2 20 2Z"/></svg>
+          <svg viewBox="0 0 24 24" class="i-on" id="pressIcoOn"><path d="M10,9A1,1 0 0,1 11,8A1,1 0 0,1 12,9V13.47L13.21,13.6L18.15,15.79C18.68,16.03 19,16.56 19,17.14V21.5C18.97,22.32 18.32,22.97 17.5,23H11C10.62,23 10.26,22.85 10,22.57L5.1,18.37L5.84,17.6C6.03,17.39 6.3,17.28 6.58,17.28H6.8L10,19V9M11,5A4,4 0 0,1 15,9C15,10.5 14.2,11.77 13,12.46V11.24C13.61,10.690 14,9.89 14,9A3,3 0 0,0 11,6A3,3 0 0,0 8,9C8,9.89 8.39,10.69 9,11.24V12.46C7.8,11.77 7,10.5 7,9A4,4 0 0,1 11,5Z"/></svg>
+        </div>
+        <div class="meta">
+          <div class="nm">Desk Button</div>
+          <div class="id">binary_sensor.desk_button</div>
+        </div>
+        <div class="state">
+          <span class="s-rest" id="pressRest">Not pressed</span>
+          <span class="s-on" id="pressOn">Pressed</span>
+        </div>
+      </div>
+      <div class="row" id="rowLamp">
+        <div class="hl warm" id="lampHl"></div>
+        <div class="ico">
+          <div class="halo warm" id="lampHalo"></div>
+          <svg viewBox="0 0 24 24" class="i-rest" id="lampIcoRest"><path d="M12,2A7,7 0 0,1 19,9C19,11.38 17.81,13.47 16,14.74V17A1,1 0 0,1 15,18H9A1,1 0 0,1 8,17V14.74C6.19,13.470 5,11.38 5,9A7,7 0 0,1 12,2M9,21V20H15V21A1,1 0 0,1 14,22H10A1,1 0 0,1 9,21M12,4A5,5 0 0,0 7,9C7,11.05 8.23,12.81 10,13.58V16H14V13.58C15.77,12.81 17,11.05 17,9A5,5 0 0,0 12,4Z"/></svg>
+          <svg viewBox="0 0 24 24" class="i-on warm" id="lampIcoOn"><path d="M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z"/></svg>
+        </div>
+        <div class="meta">
+          <div class="nm">Living Room Lamp</div>
+          <div class="id">light.living_room_lamp</div>
+        </div>
+        <div class="lamp-ctl">
+          <div class="state">
+            <span class="s-rest" id="lampRest">Off</span>
+            <span class="s-on warm" id="lampOn">On</span>
+          </div>
+          <div class="switch">
+            <div class="track"></div>
+            <div class="track-on" id="trackOn"></div>
+            <div class="thumb" id="thumb"><div class="thumb-on" id="thumbOn"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast">
+      <div class="t-ico"><svg viewBox="0 0 24 24"><path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/></svg></div>
+      <b>Automation</b><span class="sep">&middot;</span><span class="act">Toggle lamp</span>
+      <code>ble_button_press</code>
+    </div>
+  </div>
+
+  <div class="chips" id="chips"></div>
+  <div class="vignette"></div>
+</div>
+
+<template id="chipTpl">
+  <div class="chip"><svg viewBox="0 0 24 24"><path d="M2,5.27L3.28,4L20,20.72L18.73,22L13.9,17.17L11.29,19.78C9.34,21.73 6.17,21.73 4.22,19.78C2.27,17.83 2.27,14.66 4.22,12.71L5.71,11.22C5.7,12.04 5.83,12.86 6.11,13.65L5.64,14.12C4.46,15.29 4.46,17.19 5.64,18.36C6.81,19.54 8.71,19.54 9.88,18.36L12.5,15.76L10.88,14.15C10.87,14.39 10.77,14.64 10.59,14.83C10.2,15.22 9.56,15.22 9.170,14.83C8.12,13.77 7.63,12.37 7.72,11L2,5.27M12.71,4.22C14.66,2.27 17.83,2.27 19.78,4.22C21.73,6.17 21.73,9.34 19.78,11.29L18.29,12.78C18.3,11.96 18.17,11.14 17.89,10.36L18.36,9.88C19.54,8.71 19.54,6.81 18.36,5.64C17.19,4.46 15.29,4.46 14.12,5.64L10.79,8.97L9.38,7.55L12.71,4.22M13.41,9.17C13.8,8.78 14.44,8.78 14.83,9.17C16.2,10.54 16.61,12.5 16.06,14.23L14.28,12.46C14.23,11.78 13.94,11.11 13.41,10.59C13,10.2 13,9.56 13.41,9.17Z"/></svg>No pairing</div>
+  <div class="chip"><svg viewBox="0 0 24 24"><path d="M4,1C2.89,1 2,1.89 2,3V7C2,8.11 2.89,9 4,9H1V11H13V9H10C11.11,9 12,8.11 12,7V3C12,1.89 11.11,1 10,1H4M4,3H10V7H4V3M14,13C12.89,13 12,13.89 12,15V19C12,20.11 12.89,21 14,21H11V23H23V21H20C21.11,21 22,20.11 22,19V15C22,13.89 21.11,13 20,13H14M3.88,13.46L2.46,14.88L4.59,17L2.46,19.12L3.88,20.54L6,18.41L8.12,20.54L9.54,19.12L7.41,17L9.54,14.88L8.12,13.46L6,15.59L3.88,13.46M14,15H20V19H14V15Z"/></svg>No GATT</div>
+  <div class="chip"><svg viewBox="0 0 24 24"><path d="M4.93,3.93C3.12,5.74 2,8.24 2,11C2,13.76 3.12,16.26 4.93,18.07L6.34,16.66C4.89,15.22 4,13.22 4,11C4,8.79 4.89,6.78 6.34,5.34L4.93,3.93M19.07,3.93L17.66,5.34C19.11,6.78 20,8.79 20,11C20,13.22 19.11,15.22 17.66,16.66L19.07,18.070C20.88,16.26 22,13.76 22,11C22,8.24 20.88,5.74 19.07,3.93M7.76,6.76C6.67,7.85 6,9.35 6,11C6,12.65 6.67,14.15 7.76,15.24L9.17,13.83C8.45,13.11 8,12.11 8,11C8,9.89 8.45,8.89 9.17,8.17L7.76,6.76M16.24,6.76L14.83,8.17C15.55,8.89 16,9.89 16,11C16,12.11 15.55,13.11 14.83,13.83L16.24,15.24C17.33,14.15 18,12.65 18,11C18,9.35 17.33,7.85 16.24,6.76M12,9A2,2 0 0,0 10,11A2,2 0 0,0 12,13A2,2 0 0,0 14,11A2,2 0 0,0 12,9M11,15V19H10A1,1 0 0,0 9,20H2V22H9A1,1 0 0,0 10,23H14A1,1 0 0,0 15,22H22V20H15A1,1 0 0,0 14,19H13V15H11Z"/></svg>ESPHome proxy ready</div>
+  <div class="chip"><svg viewBox="0 0 24 24"><path d="M11 15H6L13 1V9H18L11 23V15Z"/></svg>Local push</div>
+</template>
+
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const mode = params.get('mode') || 'hero';
+  if (mode === 'social') document.body.classList.add('social');
+
+  // chips (shared markup for both layouts)
+  const tpl = document.getElementById('chipTpl').content;
+  document.getElementById('chips').append(tpl.cloneNode(true));
+
+
+  // ---------------------------------------------------------------------------
+  // Timeline: 6000 ms loop, two press cycles (lamp On, then lamp Off).
+  // ---------------------------------------------------------------------------
+  const D = 6000;
+  const C = [0, 3000];
+  const E = {
+    out: 'cubic-bezier(0.22, 1, 0.36, 1)',      // ease-out-quint
+    inOut: 'cubic-bezier(0.65, 0, 0.35, 1)',
+    in: 'cubic-bezier(0.5, 0, 0.75, 0)',
+    back: 'cubic-bezier(0.34, 1.56, 0.64, 1)',   // release overshoot
+    press: 'cubic-bezier(0.3, 0, 0.2, 1)',
+    lin: 'linear',
+  };
+  const $ = (id) => document.getElementById(id);
+
+  // frames: [[ms, {props}, easingToNext]]; offsets normalised to the loop
+  function track(el, frames, tag) {
+    const sorted = frames.slice().sort((a, b) => a[0] - b[0]);
+    if (sorted[0][0] !== 0) sorted.unshift([0, sorted[0][1], 'linear']);
+    if (sorted[sorted.length - 1][0] !== D) sorted.push([D, sorted[sorted.length - 1][1]]);
+    const kf = sorted.map(([t, p, e]) => Object.assign({}, p, { offset: t / D, easing: e || 'linear' }));
+    const a = el.animate(kf, { duration: D, iterations: Infinity, fill: 'both' });
+    a.id = tag || el.id || '';
+    return a;
+  }
+  // flatten per-cycle segment builders
+  const cyc = (fn) => C.flatMap((c, i) => fn(c, i));
+
+  // --- button press: cap sinks, puck squashes, then springs back
+  track($('cap'), [[0, { transform: 'translateY(0px)' }],
+    ...cyc((c) => [
+      [c + 300, { transform: 'translateY(0px)' }, E.press],
+      [c + 410, { transform: 'translateY(7px)' }, 'linear'],
+      [c + 500, { transform: 'translateY(7px)' }, E.back],
+      [c + 860, { transform: 'translateY(0px)' }],
+    ])]);
+  track($('capSide'), [[0, { transform: 'translateY(0px)' }],
+    ...cyc((c) => [
+      [c + 300, { transform: 'translateY(0px)' }, E.press],
+      [c + 410, { transform: 'translateY(7px)' }, 'linear'],
+      [c + 500, { transform: 'translateY(7px)' }, E.back],
+      [c + 860, { transform: 'translateY(0px)' }],
+    ])]);
+  track($('puck'), [[0, { transform: 'scale(1, 1)' }],
+    ...cyc((c) => [
+      [c + 300, { transform: 'scale(1, 1)' }, E.press],
+      [c + 410, { transform: 'scale(1.018, 0.975)' }, 'linear'],
+      [c + 500, { transform: 'scale(1.018, 0.975)' }, E.back],
+      [c + 860, { transform: 'scale(1, 1)' }],
+    ])]);
+  for (const [id, s] of [['shadow', 'scale(0.9, 0.8)'], ['shadowCore', 'scale(0.94, 0.8)']]) {
+    track($(id), [[0, { transform: 'scale(1, 1)', opacity: 0.6 }],
+      ...cyc((c) => [
+        [c + 300, { transform: 'scale(1, 1)', opacity: 0.6 }, E.press],
+        [c + 410, { transform: s, opacity: 0.85 }, 'linear'],
+        [c + 500, { transform: s, opacity: 0.85 }, E.out],
+        [c + 860, { transform: 'scale(1, 1)', opacity: 0.6 }],
+      ])]);
+  }
+  track($('floorGlow'), [[0, { opacity: 0.8, transform: 'scale(1)' }],
+    ...cyc((c) => [
+      [c + 320, { opacity: 0.8, transform: 'scale(1)' }, E.out],
+      [c + 460, { opacity: 1, transform: 'scale(1.08)' }, E.inOut],
+      [c + 1300, { opacity: 0.8, transform: 'scale(1)' }],
+    ])]);
+  track($('flash'), [[0, { opacity: 0 }],
+    ...cyc((c) => [
+      [c + 330, { opacity: 0 }, E.out],
+      [c + 420, { opacity: 0.22 }, E.inOut],
+      [c + 760, { opacity: 0 }],
+    ])]);
+  track($('runeGlow'), [[0, { opacity: 0 }],
+    ...cyc((c) => [
+      [c + 330, { opacity: 0 }, E.out],
+      [c + 430, { opacity: 0.9 }, E.inOut],
+      [c + 1000, { opacity: 0 }],
+    ])]);
+  // tap ripple on the top face
+  for (const [id, delay, peak] of [['ripple', 0, 0.85], ['ripple2', 110, 0.5]]) {
+    track($(id), [[0, { transform: 'scale(1)', opacity: 0 }],
+      ...cyc((c) => [
+        [c + 340 + delay, { transform: 'scale(1)', opacity: 0 }, E.out],
+        [c + 420 + delay, { transform: 'scale(2.6)', opacity: peak }, E.out],
+        [c + 950 + delay, { transform: 'scale(8.4)', opacity: 0 }],
+      ])]);
+  }
+
+  // --- advertisement arcs radiate from the button
+  const ARC_C = 'translate(230px, 232px)';
+  const arcs = [['R1', 0], ['R2', 120], ['R3', 240], ['L1', 0], ['L2', 120], ['L3', 240]];
+  for (const [k, d] of arcs) {
+    const peak = k[0] === 'R' ? 0.95 : 0.32;
+    track($('arc' + k), [[0, { transform: ARC_C + ' scale(1.12)', opacity: 0 }],
+      ...cyc((c) => [
+        [c + 400 + d, { transform: ARC_C + ' scale(1.12)', opacity: 0 }, E.out],
+        [c + 520 + d, { transform: ARC_C + ' scale(1.3)', opacity: peak }, E.out],
+        [c + 1150 + d, { transform: ARC_C + ' scale(1.9)', opacity: 0 }],
+      ])]);
+  }
+
+  // --- packet travels along the dotted path (the only linear-ish motion)
+  const P0 = 470, P1 = 1000;
+  track($('packet'), [[0, { offsetDistance: '0%', opacity: 0 }],
+    ...cyc((c) => [
+      [c + P0, { offsetDistance: '0%', opacity: 0 }, 'cubic-bezier(0.45, 0.05, 0.55, 0.95)'],
+      [c + P0 + 70, { offsetDistance: '11.2%', opacity: 1 }, 'linear'],
+      [c + P1 - 20, { offsetDistance: '96%', opacity: 1 }, 'linear'],
+      [c + P1, { offsetDistance: '100%', opacity: 1 }, E.out],
+      [c + P1 + 140, { offsetDistance: '100%', opacity: 0 }],
+    ])]);
+  // comet trail: dash head follows the packet (o = a - p)
+  for (const [id, a, op] of [['trailA', 16, 0.55], ['trailB', 8, 0.85]]) {
+    track($(id), [[0, { strokeDashoffset: a, opacity: 0 }],
+      ...cyc((c) => [
+        [c + P0, { strokeDashoffset: a, opacity: 0 }, 'cubic-bezier(0.45, 0.05, 0.55, 0.95)'],
+        [c + P0 + 70, { strokeDashoffset: a - 11.2, opacity: op }, 'linear'],
+        [c + P1 - 20, { strokeDashoffset: a - 96, opacity: op }, 'linear'],
+        [c + P1, { strokeDashoffset: a - 100, opacity: op * 0.6 }, E.out],
+        [c + P1 + 160, { strokeDashoffset: a - 100 - a, opacity: 0 }],
+      ])]);
+  }
+
+  // --- card: binary sensor pulse (Not pressed -> Pressed -> Not pressed, ~0.6 s)
+  const HIT = 1000, REL = 1620;
+  const pulse = (el, on, off, extra = {}) => track(el, [[0, Object.assign({ opacity: 0 }, extra.from || {})],
+    ...cyc((c) => [
+      [c + HIT, Object.assign({ opacity: 0 }, extra.from || {}), E.out],
+      [c + HIT + (extra.inDur || 140), Object.assign({ opacity: on }, extra.to || {}), 'linear'],
+      [c + REL, Object.assign({ opacity: on }, extra.to || {}), E.inOut],
+      [c + REL + (extra.outDur || 260), Object.assign({ opacity: off }, extra.from || {})],
+    ])]);
+  pulse($('pressHl'), 1, 0);
+  pulse($('pressHalo'), 1, 0, { from: { transform: 'scale(1.1)' }, to: { transform: 'scale(1.55)' } });
+  pulse($('pressIcoOn'), 1, 0, { from: { transform: 'scale(0.85)' }, to: { transform: 'scale(1)' } });
+  pulse($('cardGlow'), 1, 0, { outDur: 420 });
+  // state text: old value leaves first, new value arrives (no overlapping glyphs)
+  const Y = (y) => `translateY(${y}px)`;
+  track($('pressRest'), [[0, { opacity: 1, transform: Y(0) }],
+    ...cyc((c) => [
+      [c + HIT, { opacity: 1, transform: Y(0) }, E.out],
+      [c + HIT + 80, { opacity: 0, transform: Y(-5) }, 'linear'],
+      [c + REL + 80, { opacity: 0, transform: Y(5) }, E.out],
+      [c + REL + 320, { opacity: 1, transform: Y(0) }],
+    ])]);
+  track($('pressOn'), [[0, { opacity: 0, transform: Y(6) }],
+    ...cyc((c) => [
+      [c + HIT + 80, { opacity: 0, transform: Y(6) }, E.out],
+      [c + HIT + 300, { opacity: 1, transform: Y(0) }, 'linear'],
+      [c + REL, { opacity: 1, transform: Y(0) }, E.out],
+      [c + REL + 80, { opacity: 0, transform: Y(-5) }, 'linear'],
+      [c + 2900, { opacity: 0, transform: Y(6) }],
+    ])]);
+  track($('pressIcoRest'), [[0, { opacity: 1 }],
+    ...cyc((c) => [
+      [c + HIT, { opacity: 1 }, E.out],
+      [c + HIT + 120, { opacity: 0 }, 'linear'],
+      [c + REL, { opacity: 0 }, E.inOut],
+      [c + REL + 260, { opacity: 1 }],
+    ])]);
+
+  // --- lamp: automation toggles it (cycle 0 -> On, cycle 1 -> Off)
+  const L0 = HIT + 70, LD = 260;
+  const lamp = (el, onVals, offVals, ease = E.out) => track(el, [
+    [0, offVals],
+    [C[0] + L0, offVals, ease], [C[0] + L0 + LD, onVals, 'linear'],
+    [C[1] + L0, onVals, ease], [C[1] + L0 + LD, offVals],
+  ]);
+  lamp($('lampIcoOn'), { opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.8)' });
+  lamp($('lampIcoRest'), { opacity: 0 }, { opacity: 1 });
+  lamp($('lampHalo'), { opacity: 1, transform: 'scale(1.75)' }, { opacity: 0, transform: 'scale(1)' });
+  lamp($('lampHl'), { opacity: 1 }, { opacity: 0 });
+  track($('lampRest'), [
+    [0, { opacity: 1, transform: Y(0) }],
+    [C[0] + L0, { opacity: 1, transform: Y(0) }, E.out], [C[0] + L0 + 80, { opacity: 0, transform: Y(-5) }, 'linear'],
+    [C[1] + L0 + 80, { opacity: 0, transform: Y(5) }, E.out], [C[1] + L0 + 320, { opacity: 1, transform: Y(0) }],
+  ]);
+  track($('lampOn'), [
+    [0, { opacity: 0, transform: Y(6) }],
+    [C[0] + L0 + 80, { opacity: 0, transform: Y(6) }, E.out], [C[0] + L0 + 320, { opacity: 1, transform: Y(0) }, 'linear'],
+    [C[1] + L0, { opacity: 1, transform: Y(0) }, E.out], [C[1] + L0 + 80, { opacity: 0, transform: Y(-5) }],
+  ]);
+  lamp($('thumb'), { transform: 'translateX(18px)' }, { transform: 'translateX(0px)' }, E.inOut);
+  lamp($('thumbOn'), { opacity: 1 }, { opacity: 0 });
+  lamp($('trackOn'), { opacity: 1 }, { opacity: 0 });
+  track($('warmWash'), [
+    [0, { opacity: 0 }],
+    [C[0] + L0, { opacity: 0 }, E.inOut], [C[0] + L0 + 600, { opacity: 1 }, 'linear'],
+    [C[1] + L0, { opacity: 1 }, E.inOut], [C[1] + L0 + 500, { opacity: 0 }],
+  ]);
+
+  // --- toast: "Automation · Toggle lamp"
+  track($('toast'), [[0, { opacity: 0, transform: 'translateY(10px) scale(0.98)' }],
+    ...cyc((c) => [
+      [c + HIT + 90, { opacity: 0, transform: 'translateY(10px) scale(0.98)' }, E.out],
+      [c + HIT + 420, { opacity: 1, transform: 'translateY(0px) scale(1)' }, 'linear'],
+      [c + 2300, { opacity: 1, transform: 'translateY(0px) scale(1)' }, E.in],
+      [c + 2560, { opacity: 0, transform: 'translateY(4px) scale(0.99)' }],
+    ])]);
+
+  // ---------------------------------------------------------------------------
+  // Deterministic seeking for the renderer.
+  //   seek(t)          every animation at t ms
+  //   pose('hero')     story pose for stills: pressed + lamp on + arcs in flight
+  // ---------------------------------------------------------------------------
+  const all = () => document.getAnimations().filter((a) => a.effect && a.effect.getComputedTiming().duration === D);
+  window.__seek = (t) => { for (const a of all()) { a.pause(); a.currentTime = t; } };
+  window.__pose = (name) => {
+    if (name !== 'hero') return;
+    window.__seek(1420);
+    for (const a of all()) {
+      if (/^arc/.test(a.id)) a.currentTime = 760;
+      if (a.id === 'packet' || /^trail/.test(a.id)) a.currentTime = 860;
+      if (['cap', 'capSide', 'puck', 'shadow', 'shadowCore', 'flash', 'floorGlow', 'runeGlow'].includes(a.id)) a.currentTime = 470;
+      if (/^ripple/.test(a.id)) a.currentTime = 640;
+    }
+  };
+  window.__duration = D;
+  const t = params.get('t');
+  const p = params.get('pose');
+  if (p) window.__pose(p); else if (t !== null) window.__seek(Number(t));
+})();
+</script>
+</body>
+</html>

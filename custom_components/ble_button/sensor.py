@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from datetime import datetime
 
-from .const import CONF_MAC, CONF_SOURCE, DOMAIN, SOURCE_ANY, STATE_NONE
-from .coordinator import BleButtonCoordinator, BleButtonData
+from homeassistant.components.sensor import (
+    RestoreSensor,
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
+
+from .const import DOMAIN
+from .coordinator import BleButtonCoordinator
+from .entity import BleButtonEntity
 
 
 async def async_setup_entry(
@@ -19,76 +26,52 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up one BLE Button press sensor from one coordinator."""
+    """Set up the BLE Button companion sensors."""
     coordinator: BleButtonCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([BleButtonPressSensor(entry, coordinator)])
+    async_add_entities(
+        [
+            BleButtonLastPressedSensor(entry, coordinator),
+            BleButtonSignalStrengthSensor(entry, coordinator),
+        ]
+    )
 
 
-class BleButtonPressSensor(CoordinatorEntity, SensorEntity):
-    """BLE button press sensor with debug attributes."""
+class BleButtonLastPressedSensor(BleButtonEntity, RestoreSensor):
+    """Time of the last accepted press, kept across restarts."""
 
-    _attr_should_poll = False
-    _attr_icon = "mdi:gesture-tap-button"
+    _attr_translation_key = "last_pressed"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     def __init__(self, entry: ConfigEntry, coordinator: BleButtonCoordinator) -> None:
-        super().__init__(coordinator)
-        self.entry = entry
-        self._button_name = entry.data[CONF_NAME]
-        self._mac = entry.data[CONF_MAC].upper()
-        self._source = entry.data.get(CONF_SOURCE, SOURCE_ANY)
-        self._source = self._source if self._source == SOURCE_ANY else self._source.upper()
-        source_id = "any" if self._source == SOURCE_ANY else self._source.replace(":", "").lower()
+        super().__init__(entry, coordinator, "last_pressed")
+        self._restored: datetime | None = None
 
-        self._attr_name = f"{self._button_name} Press"
-        self._attr_unique_id = f"{DOMAIN}_{self._mac.replace(':', '').lower()}_{source_id}_press"
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self.entry.entry_id)},
-            name=self._button_name,
-            manufacturer="Generic BLE",
-            model="Advertisement Button",
-            connections={("bluetooth", self._mac)},
-        )
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and isinstance(last.native_value, datetime):
+            self._restored = last.native_value
 
     @property
-    def native_value(self) -> str:
-        data: BleButtonData | None = self.coordinator.data
-        if data is None:
-            return STATE_NONE
-        return data.state
+    def native_value(self) -> datetime | None:
+        last_press_time = self.coordinator.data.last_press_time
+        if last_press_time is None:
+            return self._restored
+        return dt_util.parse_datetime(last_press_time)
+
+
+class BleButtonSignalStrengthSensor(BleButtonEntity, SensorEntity):
+    """RSSI of the last advertisement received from the button."""
+
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, entry: ConfigEntry, coordinator: BleButtonCoordinator) -> None:
+        super().__init__(entry, coordinator, "signal_strength")
 
     @property
-    def extra_state_attributes(self) -> dict:
-        data: BleButtonData | None = self.coordinator.data
-
-        if data is None:
-            return {
-                "configured_mac": self._mac,
-                "accepted_source": self._source,
-                "state_note": "coordinator has no data yet",
-            }
-
-        return {
-            "configured_mac": self._mac,
-            "accepted_source": self._source,
-            "last_seen": data.last_seen,
-            "last_press_time": data.last_press_time,
-            "last_seen_address": data.last_seen_address,
-            "last_rssi": data.last_rssi,
-            "last_source": data.last_source,
-            "last_name": data.last_name,
-            "last_path": data.last_path,
-            "press_reset_delay": self.coordinator.press_reset_delay,
-            "press_count": data.press_count,
-            "press_id": data.press_id,
-            "broad_callback_hits": data.broad_callback_hits,
-            "address_callback_hits": data.address_callback_hits,
-            "shared_scanner_hits": data.shared_scanner_hits,
-            "matching_mac_seen": data.matching_mac_seen,
-            "accepted_adverts_seen": data.accepted_adverts_seen,
-            "ignored_wrong_mac": data.ignored_wrong_mac,
-            "ignored_wrong_source": data.ignored_wrong_source,
-            "ignored_duplicate": data.ignored_duplicate,
-            "entity_publish_count": data.entity_publish_count,
-            "debug_event_count": data.debug_event_count,
-        }
+    def native_value(self) -> int | None:
+        return self.coordinator.data.last_rssi
