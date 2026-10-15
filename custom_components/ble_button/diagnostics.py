@@ -32,4 +32,5 @@ async def async_get_config_entry_diagnostics(
             "tracks_every_advert": coordinator._clicks.tracks_activity,
         },
         "data": asdict(coordinator.data),
+        "trace": list(coordinator.trace),
     }

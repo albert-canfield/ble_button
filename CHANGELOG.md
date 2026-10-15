@@ -5,6 +5,31 @@ All notable changes to BLE Button. Versions follow [Semantic Versioning](https:/
 options, higher minimum Home Assistant), **minor** for new features, **patch**
 for fixes.
 
+## 3.0.1
+
+### Fixed
+
+- Multi-click with more than one Bluetooth proxy: clicks were reported as
+  long presses and doubles as triples. Copies of the same packet arriving late
+  from a slower proxy stretched the button's apparent transmit time and were
+  counted as new presses.
+  - Long press is now measured per receiver: one proxy must hear the press's
+    packet repeat for 2 s.
+  - Late copies are recognised. With the Aqara profile, a counter that steps
+    back to a packet just seen is ignored. For other buttons, content seen in
+    the last 3 s is ignored.
+- Instant mode no longer pulses twice for one press when a slower proxy
+  delivers a late copy.
+- A press that was never received is no longer added to the *next* click
+  sequence (a double was reported as a triple).
+- A click window shorter than 1 s is honoured for buttons that don't repeat
+  their packet.
+
+### Added
+
+- Diagnostics include a short trace of recent press decisions and clicks
+  (which proxy heard what, and for how long).
+
 ## 3.0.0
 
 ### ⚠️ Breaking changes

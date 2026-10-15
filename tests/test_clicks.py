@@ -25,52 +25,21 @@ from custom_components.ble_button.const import (
 )
 from custom_components.ble_button.decoder import decode
 
-from . import CLICK_ID, MAC, get_device, inject_advertisement, setup_entry
+from . import (
+    CLICK_ID,
+    MAC,
+    OTHER_PROXY,
+    PROXY,
+    get_device,
+    inject_advertisement,
+    setup_entry,
+)
 
 HS = 0x5348
 
-# Real capture from the user's button (macOS, 2026-10-15): seconds, payload.
-# Pattern pressed: single, double, long (~4 s hold), triple, single.
-REAL_CAPTURE = [
-    (69.984, "43583359aa38c1a40b1401000034"),
-    (70.605, "43583359aa38c1a40b1401000034"),
-    (80.770, "43583359aa38c1a40b1401000035"),
-    (80.833, "43583359aa38c1a40b1401000035"),
-    (81.115, "43583359aa38c1a40b1401000035"),
-    (81.967, "43583359aa38c1a40b1401000036"),
-    (81.999, "43583359aa38c1a40b1401000036"),
-    (94.326, "43583359aa38c1a40b1401000037"),
-    (94.874, "43583359aa38c1a40b1401000037"),
-    (94.906, "43583359aa38c1a40b1401000037"),
-    (95.231, "43583359aa38c1a40b1401000037"),
-    (95.530, "43583359aa38c1a40b1401000037"),
-    (95.530, "43583359aa38c1a40b1401000037"),
-    (95.825, "43583359aa38c1a40b1401000037"),
-    (96.115, "43583359aa38c1a40b1401000037"),
-    (96.435, "43583359aa38c1a40b1401000037"),
-    (96.466, "43583359aa38c1a40b1401000037"),
-    (96.983, "43583359aa38c1a40b8401000037"),
-    (97.014, "43583359aa38c1a40b8401000037"),
-    (97.046, "43583359aa38c1a40b8401000037"),
-    (97.269, "43583359aa38c1a40b8401000037"),
-    (97.300, "43583359aa38c1a40b8401000037"),
-    (97.335, "43583359aa38c1a40b8401000037"),
-    (97.603, "43583359aa38c1a40b8401000037"),
-    (115.001, "43583359aa38c1a40b1401000038"),
-    (115.034, "43583359aa38c1a40b1401000038"),
-    (115.331, "43583359aa38c1a40b1401000039"),
-    (115.625, "43583359aa38c1a40b140100003a"),
-    (115.659, "43583359aa38c1a40b140100003a"),
-    (115.887, "43583359aa38c1a40b140100003a"),
-    (115.919, "43583359aa38c1a40b140100003a"),
-    (116.219, "43583359aa38c1a40b140100003a"),
-    (128.521, "43583359aa38c1a40b140100003b"),
-    (128.785, "43583359aa38c1a40b140100003b"),
-    (128.819, "43583359aa38c1a40b140100003b"),
-    (128.852, "43583359aa38c1a40b140100003b"),
-    (129.087, "43583359aa38c1a40b140100003b"),
-]
-EXPECTED_REAL_CLICKS = ["single", "double", "long", "triple", "single"]
+from .captures import CAPTURE_1 as REAL_CAPTURE, CAPTURE_2, EXPECTED_CAPTURE_2
+from .captures import EXPECTED_CAPTURE_1 as EXPECTED_REAL_CLICKS
+
 
 STEP = 0.05
 
@@ -109,6 +78,29 @@ async def replay(
     for t, payload in capture:
         await clock.advance_to(t - start)
         inject_advertisement(manufacturer_data={HS: bytes.fromhex(payload)})
+        await hass.async_block_till_done()
+    await clock.advance_to(clock.now + 15)
+
+
+async def replay_via_proxies(
+    hass: HomeAssistant,
+    clock: Clock,
+    capture: list[tuple[float, str]],
+    lag: float,
+    rssi_fast: int = -60,
+    rssi_slow: int = -60,
+) -> None:
+    """Two proxies hear every packet; the second delivers it ``lag`` s later."""
+    start = capture[0][0]
+    timeline = sorted(
+        [(t - start, PROXY, rssi_fast, p) for t, p in capture]
+        + [(t - start + lag, OTHER_PROXY, rssi_slow, p) for t, p in capture]
+    )
+    for t, source, rssi, payload in timeline:
+        await clock.advance_to(t)
+        inject_advertisement(
+            source=source, rssi=rssi, manufacturer_data={HS: bytes.fromhex(payload)}
+        )
         await hass.async_block_till_done()
     await clock.advance_to(clock.now + 15)
 
@@ -224,7 +216,7 @@ async def test_generic_held_button_long_press(
     t = 0.0
     while t < 3.5:
         await clock.advance_to(t)
-        if t >= 2.1:  # reported while still held
+        if t >= 2.4:  # reported while still held (first repeat past 2 s)
             assert [e.data["click_type"] for e in click_events] == ["long"]
         payload = b"\x01" if t < 2.5 else b"\x81"  # unknown format, changes mid-hold
         inject_advertisement(manufacturer_data={0x1234: payload})
@@ -321,22 +313,26 @@ async def test_counter_wraps_around(
     assert [e.data["click_type"] for e in click_events] == ["double"]
 
 
-async def test_cached_advert_seeds_counter_after_reload(
+async def test_missed_press_of_earlier_gesture_not_added(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
     multi_click_entry: MockConfigEntry,
     click_events: list[Event],
 ) -> None:
-    """The replayed cached advert sets the counter but isn't a press."""
+    """Counter 0x35 was never received; 0x36 starts a new gesture: single.
+
+    Seen in a real capture: a whole press can go unheard. Missed presses only
+    count inside a click sequence that is still open.
+    """
     inject_advertisement(manufacturer_data=hs_payload(0x34))
     await hass.async_block_till_done()
     coordinator = await setup_entry(hass, multi_click_entry)
-    assert coordinator.data.press_count == 0
+    assert coordinator.data.press_count == 0  # cached advert is not a press
 
     clock = Clock(hass, freezer)
-    inject_advertisement(manufacturer_data=hs_payload(0x36))  # 0x35 was missed
+    inject_advertisement(manufacturer_data=hs_payload(0x36))
     await clock.advance_to(5)
-    assert [e.data["click_type"] for e in click_events] == ["double"]
+    assert [e.data["click_type"] for e in click_events] == ["single"]
 
 
 async def test_generic_button_counts_changed_adverts(
@@ -422,3 +418,71 @@ async def test_double_click_device_trigger(
     await clock.advance_to(5)
 
     assert [c.data["type"] for c in service_calls] == ["double"]
+
+
+@pytest.mark.parametrize("lag", [0.0, 0.3, 0.7, 1.2, 2.0])
+@pytest.mark.parametrize(("rssi_fast", "rssi_slow"), [(-60, -60), (-85, -50)])
+@pytest.mark.parametrize("profile", [True, False], ids=["profile", "generic"])
+async def test_slow_proxy_does_not_change_clicks(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    multi_click_entry: MockConfigEntry,
+    click_events: list[Event],
+    monkeypatch: pytest.MonkeyPatch,
+    lag: float,
+    rssi_fast: int,
+    rssi_slow: int,
+    profile: bool,
+) -> None:
+    """Regression (v3.0.0 in a real home): late copies from a second proxy
+    turned clicks into long presses and doubles into triples."""
+    if not profile:
+        monkeypatch.setattr(
+            "custom_components.ble_button.coordinator.decode", lambda _data: None
+        )
+    await setup_entry(hass, multi_click_entry)
+
+    await replay_via_proxies(
+        hass, Clock(hass, freezer), REAL_CAPTURE, lag, rssi_fast, rssi_slow
+    )
+
+    assert [e.data["click_type"] for e in click_events] == EXPECTED_REAL_CLICKS
+
+
+@pytest.mark.parametrize("lag", [0.0, 0.7])
+async def test_capture_2_doubles_triples_and_hold(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    multi_click_entry: MockConfigEntry,
+    click_events: list[Event],
+    lag: float,
+) -> None:
+    """Fast and slow doubles/triples, a missed press, and an 11 s hold."""
+    await setup_entry(hass, multi_click_entry)
+
+    await replay_via_proxies(hass, Clock(hass, freezer), CAPTURE_2, lag)
+
+    assert [e.data["click_type"] for e in click_events] == EXPECTED_CAPTURE_2
+
+
+@pytest.mark.parametrize("profile", [True, False], ids=["profile", "generic"])
+async def test_instant_mode_slow_proxy_one_pulse_per_press(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_entry: MockConfigEntry,
+    press_events: list[Event],
+    monkeypatch: pytest.MonkeyPatch,
+    profile: bool,
+) -> None:
+    """Late copies from a slower proxy must not add extra pulses either."""
+    if not profile:
+        monkeypatch.setattr(
+            "custom_components.ble_button.coordinator.decode", lambda _data: None
+        )
+    await setup_entry(hass, mock_entry)
+
+    await replay_via_proxies(hass, Clock(hass, freezer), REAL_CAPTURE, lag=0.7)
+
+    # Counters 0x34..0x3b: 8 presses. Without the profile, the long-press flag
+    # packet is new content, so it counts as a press too.
+    assert len(press_events) == (8 if profile else 9)
