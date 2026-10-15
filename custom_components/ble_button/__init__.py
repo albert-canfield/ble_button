@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_MAC, CONF_SOURCE, DOMAIN, PLATFORMS, SOURCE_ANY
 from .coordinator import BleButtonCoordinator
+from .entity import entity_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,13 +30,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Up to v2.x the press entity was a text sensor (none/press). It is a
+    # binary sensor now; drop the orphaned sensor entity from the registry.
+    ent_reg = er.async_get(hass)
+    source = entry.data.get(CONF_SOURCE, SOURCE_ANY)
+    old_unique_id = entity_unique_id(
+        entry.data[CONF_MAC].upper(),
+        source if source == SOURCE_ANY else source.upper(),
+        "press",
+    )
+    if old_entity_id := ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, old_unique_id):
+        ent_reg.async_remove(old_entity_id)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     entry.async_on_unload(coordinator.async_start())
 
-    _LOGGER.warning(
-        "BLE Button DEBUG started: name=%s mac=%s source=%s",
+    _LOGGER.debug(
+        "BLE Button started: name=%s mac=%s source=%s",
         entry.title,
         entry.data[CONF_MAC],
         entry.data.get(CONF_SOURCE, SOURCE_ANY),

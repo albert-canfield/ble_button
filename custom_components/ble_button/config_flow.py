@@ -271,7 +271,7 @@ class BleButtonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         cancel = bluetooth.async_register_callback(
             self.hass,
             _callback,
-            {},
+            {"connectable": False},
             bluetooth.BluetoothScanningMode.ACTIVE,
         )
         try:
@@ -305,9 +305,10 @@ class BleButtonOptionsFlow(config_entries.OptionsFlow):
                 self.hass.config_entries.async_update_entry(
                     entry,
                     data={CONF_NAME: name, CONF_MAC: mac, CONF_SOURCE: source},
-                    options={CONF_PRESS_RESET_DELAY: reset_delay},
                 )
-                return self.async_create_entry(title="", data={})
+                return self.async_create_entry(
+                    title="", data={CONF_PRESS_RESET_DELAY: reset_delay}
+                )
 
         source_choices = _scanner_choices(self.hass)
         if current_source != SOURCE_ANY:
