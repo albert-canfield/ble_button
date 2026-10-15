@@ -7,9 +7,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, MODE_INSTANT
 from .coordinator import BleButtonCoordinator
-from .entity import BleButtonEntity
+from .entity import BleButtonEntity, entry_mode
 
 
 async def async_setup_entry(
@@ -17,7 +17,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up one BLE Button press binary sensor from one coordinator."""
+    """Set up the press binary sensor (instant mode)."""
+    if entry_mode(entry) != MODE_INSTANT:
+        return
     coordinator: BleButtonCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([BleButtonPressBinarySensor(entry, coordinator)])
 

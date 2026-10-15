@@ -14,6 +14,14 @@
 
 ### Added
 
+- **Button mode per button: Instant or Multi-click.** Multi-click reports
+  single / double / triple / long press through an event entity
+  (`event.<name>`), device triggers and a `ble_button_click` event.
+  Detection is brand-independent: presses are counted within a configurable
+  window (default 2 s), and a button still transmitting 2 s after a press is a
+  long press (HA 2026.10+).
+- Button profiles for known payload formats (first: `0x5348` "HS" counter),
+  which recover missed presses and use the button's own long-press flag.
 - *Button pressed* device trigger in the automation editor.
 - **Last pressed** timestamp sensor (restored after restart).
 - **Signal strength** diagnostic sensor (disabled by default).
@@ -36,6 +44,8 @@
 
 ### Changed
 
+- Existing buttons stay in instant mode; switching modes swaps the binary
+  sensor and the event entity automatically.
 - Logging is quiet by default; per-press details are logged at debug level.
 - Unrelated nearby BLE traffic no longer causes entity updates (fewer
   recorder writes).

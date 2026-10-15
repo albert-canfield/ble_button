@@ -30,10 +30,9 @@ async def test_get_triggers(hass: HomeAssistant, mock_entry: MockConfigEntry) ->
         hass, DeviceAutomationType.TRIGGER, device.id
     )
     ours = [t for t in triggers if t["domain"] == DOMAIN]
-    assert len(ours) == 1
-    assert ours[0]["platform"] == "device"
-    assert ours[0]["device_id"] == device.id
-    assert ours[0]["type"] == "press"
+    assert [t["type"] for t in ours] == ["press"]
+    assert all(t["platform"] == "device" for t in ours)
+    assert all(t["device_id"] == device.id for t in ours)
 
 
 async def test_device_trigger_fires_automation(
@@ -119,6 +118,22 @@ async def test_invalid_trigger_type_rejected(
         },
     )
     await hass.async_block_till_done()
-    assert "value must be one of ['press'] at 'type'" in caplog.text
+    assert (
+        "value must be one of ['double', 'long', 'press', 'single', 'triple'] at 'type'"
+        in caplog.text
+    )
     state = hass.states.get("automation.unnamed_automation")
     assert state is None or state.state == "unavailable"
+
+
+async def test_get_triggers_multi_click(
+    hass: HomeAssistant, multi_click_entry: MockConfigEntry
+) -> None:
+    await setup_entry(hass, multi_click_entry)
+    device = get_device(hass, multi_click_entry)
+
+    triggers = await async_get_device_automations(
+        hass, DeviceAutomationType.TRIGGER, device.id
+    )
+    ours = [t["type"] for t in triggers if t["domain"] == DOMAIN]
+    assert ours == ["single", "double", "triple", "long"]

@@ -11,15 +11,31 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import bluetooth
 from homeassistant.const import CONF_NAME
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
+    CONF_CLICK_WINDOW,
     CONF_MAC,
+    CONF_MODE,
     CONF_PRESS_RESET_DELAY,
     CONF_SOURCE,
+    DEFAULT_CLICK_WINDOW,
     DEFAULT_DISCOVERY_SECONDS,
+    DEFAULT_MODE,
     DEFAULT_PRESS_RESET_DELAY,
     DOMAIN,
+    MODES,
     SOURCE_ANY,
+)
+
+MODE_SELECTOR = SelectSelector(
+    SelectSelectorConfig(
+        options=MODES, mode=SelectSelectorMode.LIST, translation_key="mode"
+    )
 )
 
 MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
@@ -96,8 +112,10 @@ def _manual_schema(hass) -> vol.Schema:
         {
             vol.Required(CONF_NAME, default=""): str,
             vol.Required(CONF_MAC, default=""): str,
+            vol.Required(CONF_MODE, default=DEFAULT_MODE): MODE_SELECTOR,
             vol.Optional(CONF_SOURCE, default=SOURCE_ANY): vol.In(_scanner_choices(hass)),
             vol.Optional(CONF_PRESS_RESET_DELAY, default=DEFAULT_PRESS_RESET_DELAY): vol.Coerce(float),
+            vol.Optional(CONF_CLICK_WINDOW, default=DEFAULT_CLICK_WINDOW): vol.Coerce(float),
         }
     )
 
@@ -185,6 +203,8 @@ class BleButtonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             source_mode = user_input.get(CONF_SOURCE, discovered_source)
             source = SOURCE_ANY if source_mode == SOURCE_ANY else _normalise_mac(source_mode)
             reset_delay = float(user_input[CONF_PRESS_RESET_DELAY])
+            click_window = float(user_input.get(CONF_CLICK_WINDOW, DEFAULT_CLICK_WINDOW))
+            mode = user_input.get(CONF_MODE, DEFAULT_MODE)
 
             if not name:
                 errors[CONF_NAME] = "name_required"
@@ -192,13 +212,19 @@ class BleButtonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_SOURCE] = "invalid_source"
             elif reset_delay <= 0:
                 errors[CONF_PRESS_RESET_DELAY] = "invalid_reset_delay"
+            elif click_window <= 0:
+                errors[CONF_CLICK_WINDOW] = "invalid_click_window"
             else:
                 await self.async_set_unique_id(_entry_unique_id(discovered_mac, source))
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=name,
                     data={CONF_NAME: name, CONF_MAC: discovered_mac, CONF_SOURCE: source},
-                    options={CONF_PRESS_RESET_DELAY: reset_delay},
+                    options={
+                        CONF_MODE: mode,
+                        CONF_PRESS_RESET_DELAY: reset_delay,
+                        CONF_CLICK_WINDOW: click_window,
+                    },
                 )
 
         source_choices = _scanner_choices(self.hass)
@@ -209,8 +235,10 @@ class BleButtonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="confirm_discovered",
             data_schema=vol.Schema({
                 vol.Required(CONF_NAME, default=discovered_name): str,
+                vol.Required(CONF_MODE, default=DEFAULT_MODE): MODE_SELECTOR,
                 vol.Required(CONF_SOURCE, default=discovered_source): vol.In(source_choices),
                 vol.Optional(CONF_PRESS_RESET_DELAY, default=DEFAULT_PRESS_RESET_DELAY): vol.Coerce(float),
+                vol.Optional(CONF_CLICK_WINDOW, default=DEFAULT_CLICK_WINDOW): vol.Coerce(float),
             }),
             errors=errors,
             description_placeholders={"mac": discovered_mac, "source": discovered_source, "rssi": str(self._selected.get("rssi"))},
@@ -225,6 +253,8 @@ class BleButtonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             source = user_input.get(CONF_SOURCE, SOURCE_ANY)
             source = SOURCE_ANY if source == SOURCE_ANY else _normalise_mac(source)
             reset_delay = float(user_input[CONF_PRESS_RESET_DELAY])
+            click_window = float(user_input.get(CONF_CLICK_WINDOW, DEFAULT_CLICK_WINDOW))
+            mode = user_input.get(CONF_MODE, DEFAULT_MODE)
 
             if not name:
                 errors[CONF_NAME] = "name_required"
@@ -234,13 +264,19 @@ class BleButtonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_SOURCE] = "invalid_source"
             elif reset_delay <= 0:
                 errors[CONF_PRESS_RESET_DELAY] = "invalid_reset_delay"
+            elif click_window <= 0:
+                errors[CONF_CLICK_WINDOW] = "invalid_click_window"
             else:
                 await self.async_set_unique_id(_entry_unique_id(mac, source))
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=name,
                     data={CONF_NAME: name, CONF_MAC: mac, CONF_SOURCE: source},
-                    options={CONF_PRESS_RESET_DELAY: reset_delay},
+                    options={
+                        CONF_MODE: mode,
+                        CONF_PRESS_RESET_DELAY: reset_delay,
+                        CONF_CLICK_WINDOW: click_window,
+                    },
                 )
 
         return self.async_show_form(step_id="manual", data_schema=_manual_schema(self.hass), errors=errors)
@@ -291,23 +327,34 @@ class BleButtonOptionsFlow(config_entries.OptionsFlow):
         mac = entry.data[CONF_MAC]
         current_source = entry.data.get(CONF_SOURCE, SOURCE_ANY)
         current_reset_delay = entry.options.get(CONF_PRESS_RESET_DELAY, DEFAULT_PRESS_RESET_DELAY)
+        current_click_window = entry.options.get(CONF_CLICK_WINDOW, DEFAULT_CLICK_WINDOW)
+        current_mode = entry.options.get(CONF_MODE, DEFAULT_MODE)
 
         if user_input is not None:
             source = user_input.get(CONF_SOURCE, current_source)
             source = SOURCE_ANY if source == SOURCE_ANY else _normalise_mac(source)
             reset_delay = float(user_input[CONF_PRESS_RESET_DELAY])
+            click_window = float(user_input.get(CONF_CLICK_WINDOW, current_click_window))
+            mode = user_input.get(CONF_MODE, current_mode)
 
             if source != SOURCE_ANY and not MAC_RE.match(source):
                 errors[CONF_SOURCE] = "invalid_source"
             elif reset_delay <= 0:
                 errors[CONF_PRESS_RESET_DELAY] = "invalid_reset_delay"
+            elif click_window <= 0:
+                errors[CONF_CLICK_WINDOW] = "invalid_click_window"
             else:
                 self.hass.config_entries.async_update_entry(
                     entry,
                     data={CONF_NAME: name, CONF_MAC: mac, CONF_SOURCE: source},
                 )
                 return self.async_create_entry(
-                    title="", data={CONF_PRESS_RESET_DELAY: reset_delay}
+                    title="",
+                    data={
+                        CONF_MODE: mode,
+                        CONF_PRESS_RESET_DELAY: reset_delay,
+                        CONF_CLICK_WINDOW: click_window,
+                    },
                 )
 
         source_choices = _scanner_choices(self.hass)
@@ -317,8 +364,10 @@ class BleButtonOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
+                vol.Required(CONF_MODE, default=current_mode): MODE_SELECTOR,
                 vol.Required(CONF_SOURCE, default=current_source): vol.In(source_choices),
                 vol.Optional(CONF_PRESS_RESET_DELAY, default=current_reset_delay): vol.Coerce(float),
+                vol.Optional(CONF_CLICK_WINDOW, default=current_click_window): vol.Coerce(float),
             }),
             errors=errors,
             description_placeholders={"name": name, "mac": mac},

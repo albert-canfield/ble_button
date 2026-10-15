@@ -41,6 +41,9 @@ async def test_entry_diagnostics(
         "address": MAC,
         "accepted_source": SOURCE_ANY,
         "press_reset_delay": 0.6,
+        "mode": "instant",
+        "click_window": 2.0,
+        "tracks_every_advert": False,
     }
     data = diag["data"]
     assert data["press_count"] == 1

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -16,15 +17,24 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .clicks import ClickDetector
 from .const import (
+    CONF_CLICK_WINDOW,
+    CONF_MODE,
     CONF_PRESS_RESET_DELAY,
+    DEFAULT_CLICK_WINDOW,
+    DEFAULT_MODE,
     DEFAULT_PRESS_RESET_DELAY,
     DUPLICATE_WINDOW_SECONDS,
     DOMAIN,
+    EVENT_BLE_BUTTON_CLICK,
     EVENT_BLE_BUTTON_DEBUG,
     EVENT_BLE_BUTTON_PRESS,
+    MAX_COUNTER_STEP,
+    MODE_MULTI_CLICK,
     SOURCE_ANY,
 )
+from .decoder import DecodedAdvert, decode
 
 
 @dataclass
@@ -43,6 +53,12 @@ class BleButtonData:
 
     press_count: int = 0
     press_id: int = 0
+
+    # Click detection
+    protocol: str | None = None
+    last_counter: int | None = None
+    last_click_type: str | None = None
+    click_count: int = 0
 
     # Listener-path counters
     broad_callback_hits: int = 0
@@ -67,10 +83,10 @@ class BleButtonCoordinator(DataUpdateCoordinator):
     1. HA Bluetooth broad callback
     2. HA Bluetooth exact address callback (connectable or not)
 
-    Payload is ignored. Any matching MAC/source advert becomes:
-    off -> on -> off
-
-    The debug attributes show which listener path is actually receiving data.
+    Any changed advert from the configured MAC/source is a press:
+    off -> on -> off. In multi-click mode presses are grouped into single /
+    double / triple / long clicks (clicks.py). Both work for any button; a
+    button profile (decoder.py) only adds accuracy for formats it knows.
     """
 
     def __init__(
@@ -96,11 +112,34 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         self.press_reset_delay = float(
             entry.options.get(CONF_PRESS_RESET_DELAY, DEFAULT_PRESS_RESET_DELAY)
         )
+        self.click_window = float(
+            entry.options.get(CONF_CLICK_WINDOW, DEFAULT_CLICK_WINDOW)
+        )
+        self.mode = entry.options.get(CONF_MODE, DEFAULT_MODE)
+        self.multi_click = self.mode == MODE_MULTI_CLICK
 
         self.data = BleButtonData()
         self._reset_task: asyncio.Task | None = None
         self._last_accept_monotonic = 0.0
         self._replaying = False
+        self._last_counter: int | None = None
+        self._long_press_counter: int | None = None
+        self._clicks = ClickDetector(hass, self.click_window, self._emit_click)
+        self._click_listeners: set[Callable[[str], None]] = set()
+
+    @callback
+    def async_add_click_listener(
+        self, listener: Callable[[str], None]
+    ) -> Callable[[], None]:
+        """Call ``listener(click_type)`` on every detected click."""
+        self._click_listeners.add(listener)
+        return lambda: self._click_listeners.discard(listener)
+
+    def _device_id(self) -> str | None:
+        devices = dr.async_entries_for_config_entry(
+            dr.async_get(self.hass), self.entry.entry_id
+        )
+        return devices[0].id if devices else None
 
     def _publish(self, data: BleButtonData) -> None:
         data.entity_publish_count += 1
@@ -140,11 +179,25 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         )
         self._replaying = False
 
+        # Multi-click on HA 2026.10+: also see the identical repeats a held
+        # button sends, which the change-based callbacks above filter out.
+        register_every_advert = getattr(
+            bluetooth, "async_register_advertisement_callback", None
+        )
+        if self.multi_click and register_every_advert is not None:
+            unload_callbacks.append(
+                register_every_advert(self.hass, self._handle_every_advert, self.address)
+            )
+            self._clicks.tracks_activity = True
+
         self.logger.debug(
-            "BLE Button listeners registered: name=%s mac=%s source=%s",
+            "BLE Button listeners registered: name=%s mac=%s source=%s mode=%s "
+            "every_advert=%s",
             self.entry.title,
             self.address,
             self.accepted_source,
+            self.mode,
+            self._clicks.tracks_activity,
         )
 
         def _unload() -> None:
@@ -155,14 +208,35 @@ class BleButtonCoordinator(DataUpdateCoordinator):
                     pass
             if self._reset_task and not self._reset_task.done():
                 self._reset_task.cancel()
+            self._clicks.cancel()
 
         return _unload
 
     @callback
+    def _handle_every_advert(self, service_info: Any) -> None:
+        """Note that the button is (still) transmitting, repeats included."""
+        if self.accepted_source != SOURCE_ANY and (
+            (getattr(service_info, "source", None) or "").upper()
+            not in ("", self.accepted_source)
+        ):
+            return
+        self._clicks.note_activity()
+
+    @callback
     def _handle_service_info(self, path: str, service_info: Any) -> None:
         """Handle Home Assistant BluetoothServiceInfoBleak."""
+        seen_address = (getattr(service_info, "address", "") or "").upper()
+        decoded = decode(getattr(service_info, "manufacturer_data", None) or {})
+
         if self._replaying:
+            # Not a press, but remember the button's counter so the first real
+            # press after a reload/restart isn't counted as several.
+            if decoded is not None and seen_address == self.address:
+                self._last_counter = decoded.counter
+                if decoded.long_press:
+                    self._long_press_counter = decoded.counter
             return
+
         data: BleButtonData = copy.deepcopy(self.data or BleButtonData())
 
         if path == "broad_callback":
@@ -170,7 +244,6 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         elif path == "address_callback":
             data.address_callback_hits += 1
 
-        seen_address = (getattr(service_info, "address", "") or "").upper()
         seen_source = (getattr(service_info, "source", None) or "").upper()
         rssi = getattr(service_info, "rssi", None)
         name = getattr(service_info, "name", None)
@@ -182,6 +255,7 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             seen_source=seen_source,
             rssi=rssi,
             name=name,
+            decoded=decoded,
         )
 
     def _process_advert(
@@ -192,6 +266,7 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         seen_source: str,
         rssi: int | None,
         name: str | None,
+        decoded: DecodedAdvert | None = None,
     ) -> None:
         """Process one advertisement from any listener path."""
         now = datetime.now(timezone.utc).isoformat()
@@ -231,14 +306,36 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             )
             return
 
-        now_mono = time.monotonic()
-        if now_mono - self._last_accept_monotonic < DUPLICATE_WINDOW_SECONDS:
-            data.ignored_duplicate += 1
-            self._publish(data)
-            self._fire_debug(data, "ignored_duplicate")
-            return
+        if decoded is not None:
+            presses, long_press = self._decoded_presses(decoded)
+            data.protocol = decoded.protocol
+            data.last_counter = decoded.counter
+        else:
+            now_mono = time.monotonic()
+            if now_mono - self._last_accept_monotonic < DUPLICATE_WINDOW_SECONDS:
+                presses = 0
+            else:
+                self._last_accept_monotonic = now_mono
+                presses = 1
+            long_press = False
 
-        self._last_accept_monotonic = now_mono
+        if self.multi_click:
+            if long_press:
+                self._clicks.long_press()
+            elif presses and not self._clicks.press(
+                presses,
+                certain=decoded is not None,
+                may_be_held=decoded is not None,
+            ):
+                presses = 0  # payload changed while the button is held
+
+        if not presses:
+            # Repeat of a press already handled, or only its long-press flag.
+            if not long_press:
+                data.ignored_duplicate += 1
+            self._publish(data)
+            self._fire_debug(data, "long_press" if long_press else "ignored_duplicate")
+            return
 
         # A press while still "on" is published as off -> on so state
         # triggers fire for every press.
@@ -248,18 +345,14 @@ class BleButtonCoordinator(DataUpdateCoordinator):
 
         data.pressed = True
         data.accepted_adverts_seen += 1
-        data.press_count += 1
+        data.press_count += presses
         data.press_id += 1
         data.last_press_time = now
 
-        devices = dr.async_entries_for_config_entry(
-            dr.async_get(self.hass), self.entry.entry_id
-        )
-        device = devices[0] if devices else None
         self.hass.bus.async_fire(
             EVENT_BLE_BUTTON_PRESS,
             {
-                "device_id": device.id if device else None,
+                "device_id": self._device_id(),
                 "name": self.entry.title,
                 "mac": self.address,
                 "accepted_source": self.accepted_source,
@@ -292,6 +385,50 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             self.hass,
             self._async_reset_state(data.press_id),
             name=f"ble_button reset {self.address}",
+        )
+
+    def _decoded_presses(self, decoded: DecodedAdvert) -> tuple[int, bool]:
+        """Return (new presses, new long press) from a decoded advert."""
+        if self._last_counter is None:
+            presses = 1
+        else:
+            presses = (decoded.counter - self._last_counter) % 256
+            if presses > MAX_COUNTER_STEP:
+                presses = 1
+        self._last_counter = decoded.counter
+
+        long_press = (
+            decoded.long_press and decoded.counter != self._long_press_counter
+        )
+        if long_press:
+            self._long_press_counter = decoded.counter
+        return presses, long_press
+
+    @callback
+    def _emit_click(self, click_type: str) -> None:
+        """Publish a detected click to the bus, triggers and event entity."""
+        data: BleButtonData = copy.deepcopy(self.data)
+        data.last_click_type = click_type
+        data.click_count += 1
+        self.data = data
+
+        self.hass.bus.async_fire(
+            EVENT_BLE_BUTTON_CLICK,
+            {
+                "device_id": self._device_id(),
+                "name": self.entry.title,
+                "mac": self.address,
+                "click_type": click_type,
+            },
+        )
+        for listener in list(self._click_listeners):
+            listener(click_type)
+
+        self.logger.debug(
+            "BLE Button click: name=%s mac=%s type=%s",
+            self.entry.title,
+            self.address,
+            click_type,
         )
 
     def _fire_debug(self, data: BleButtonData, decision: str) -> None:
