@@ -15,7 +15,7 @@ Distributed through HACS as a custom repository (`albert-canfield/ble_button`). 
   - `binary_sensor.py`: the button in instant mode (`_attr_name = None`, so it's named after the device; `translation_key="press"`).
   - `event.py`: the button in multi-click mode (`_attr_name = None`, `translation_key="click"`, fed by `coordinator.async_add_click_listener`).
   - `clicks.py`: `ClickDetector`, brand-independent click/long-press logic (see below).
-  - `decoder.py`: optional **button profiles** for known payload formats (currently `hs_counter`, manufacturer ID 0x5348).
+  - `decoder.py`: optional **button profiles** for known payload formats (currently `hs_counter`: the Aqara BLE button, manufacturer ID 0x5348; the user's own button).
   - `sensor.py`: Last pressed (timestamp, `RestoreSensor`) and Signal strength (diagnostic, disabled by default).
   - `device_trigger.py`: lists `press` (instant) or `single/double/triple/long` (multi-click) per the device's entry mode; attaches to `ble_button_press` / `ble_button_click` filtered by `device_id` (+ `click_type`).
   - `diagnostics.py`: all debug counters live here, not in entity attributes.
@@ -55,12 +55,22 @@ Tests use the real HA Bluetooth stack (phcc `enable_bluetooth`); inject adverts 
 
 CI (`.github/workflows/`) runs hassfest (`home-assistant/actions/hassfest`), HACS validation (`hacs/action`, category integration) and pytest. All three must pass before a release.
 
-## Releasing
+## Versioning and releasing
 
-1. Bump `version` in `custom_components/ble_button/manifest.json` and add a `CHANGELOG.md` entry.
-2. Merge to `main`, wait for CI to pass.
-3. `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <notes>`. HACS offers users the GitHub **releases**, so the tag must be semver with a `v` prefix.
-4. Breaking changes (entity IDs, states, unique IDs) need a major bump and an "Upgrading" note in the README.
+Semantic Versioning, starting from **v3.0.0** (the first properly managed release; the manifest had already reached 2.3.0, so never go below 3.x):
+
+| Change | Bump |
+|---|---|
+| Breaks existing setups: entity IDs/states/unique IDs, removed options, higher min HA | major |
+| New feature: button profile, option, entity, trigger | minor |
+| Bug fix only | patch |
+| Needs real-hardware testing first | pre-release `vX.Y.Z-beta.N` (manifest `X.Y.Z-beta.N`, `gh release create --prerelease`) |
+
+1. Bump `version` in `custom_components/ble_button/manifest.json` and add a `## X.Y.Z` entry to `CHANGELOG.md` (CI's *Version* job fails without it).
+2. PR → merge to `main` once CI is green.
+3. `gh release create vX.Y.Z --target main --title "vX.Y.Z: <headline>" --notes-file <notes>`. HACS offers users the GitHub **releases**; the tag must be exactly `v` + manifest version.
+4. `.github/workflows/release.yml` then checks tag == manifest version and attaches `ble_button.zip` (manual install).
+5. Major bumps need an "Upgrading" note in the README.
 
 `hacs.json` `homeassistant` is the minimum HA version HACS will install on; raise it if code starts using newer core APIs.
 
