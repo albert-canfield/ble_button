@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from datetime import datetime
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -21,6 +21,7 @@ from .const import (
 )
 
 _CLICK_TYPE_BY_COUNT = {1: CLICK_SINGLE, 2: CLICK_DOUBLE}
+_MIN_RECHECK = 0.05
 
 
 class ClickDetector:
@@ -29,10 +30,11 @@ class ClickDetector:
     Brand-independent rules:
     - Presses are counted until the button stays quiet for ``window`` seconds;
       the count becomes the click type (3 or more is a triple click).
-    - Long press: many buttons keep repeating their packet while held. When
-      every advert is reported through ``note_activity`` (``tracks_activity``),
-      a button still transmitting LONG_PRESS_TIME after a press is held: that
-      is a long press, and payload changes during the hold aren't new presses.
+    - Long press: many buttons keep repeating the packet of a press while it
+      is held. When every advert is reported through ``note_activity``
+      (``tracks_activity``), one receiver hearing the current press's packet
+      repeat for LONG_PRESS_TIME is a long press. Spans are measured per
+      receiver, so proxies that deliver late can't stretch a short click.
 
     A button profile (decoder.py) can add certainty on top: exact press counts
     (``certain=True``) and the button's own long-press flag (``long_press``).
@@ -53,52 +55,63 @@ class ClickDetector:
         self._count = 0
         self._may_be_held = False
         self._holding = False
-        self._last_activity = 0.0
-        self._continuous = False
-        self._repeats = 0
+        self._press_key: Hashable | None = None
+        # Receiver -> [first, last] time it heard the current press's packet.
+        self._heard: dict[str, list[float]] = {}
         self._window_closed_at: float | None = None
         self._cancel_window: CALLBACK_TYPE | None = None
-        self._cancel_hold_check: CALLBACK_TYPE | None = None
+
+    @property
+    def counting(self) -> bool:
+        """Whether a click sequence is in progress."""
+        return self._count > 0
+
+    @property
+    def spans(self) -> dict[str, float]:
+        """How long each receiver has heard the current press's packet."""
+        return {source: round(last - first, 3) for source, (first, last) in self._heard.items()}
 
     @callback
-    def note_activity(self) -> None:
-        """Record one advert from the button (repeats included)."""
+    def note_activity(self, source: str, key: Hashable) -> None:
+        """Record one advert (repeats included) heard by ``source``."""
+        if key != self._press_key:
+            return
         now = time.monotonic()
-        if now - self._last_activity > HOLD_REPEAT_GAP:
-            # The button went quiet in between: any hold is over.
-            self._continuous = False
-            self._holding = False
-        self._last_activity = now
-        self._repeats += 1
+        heard = self._heard.get(source)
+        if heard is None or now - heard[1] > HOLD_REPEAT_GAP:
+            self._heard[source] = [now, now]
+            return
+        heard[1] = now
+        if self._count and heard[1] - heard[0] >= LONG_PRESS_TIME:
+            self.long_press()
 
     @callback
     def press(
-        self, presses: int = 1, *, certain: bool = False, may_be_held: bool = False
+        self,
+        presses: int,
+        key: Hashable,
+        source: str,
+        *,
+        certain: bool = False,
+        may_be_held: bool = False,
     ) -> bool:
         """Count presses; False if this is just a payload change during a hold."""
+        now = time.monotonic()
         if self._holding:
-            if not certain:
+            if not certain and self._still_hearing(now):
                 return False
             self._holding = False
 
-        now = time.monotonic()
         self._count += presses
         self._may_be_held = self._may_be_held or may_be_held
-        self._last_activity = now
-        self._continuous = True
-        self._repeats = 0
+        self._press_key = key
+        self._heard = {source: [now, now]}
         self._window_closed_at = None
 
         window = self._window
         if self._may_be_held and not self.tracks_activity:
             window = max(window, LONG_PRESS_FALLBACK_WINDOW)
-        self._cancel_window = self._restart(
-            self._cancel_window, window, self._async_window_closed
-        )
-        if self.tracks_activity:
-            self._cancel_hold_check = self._restart(
-                self._cancel_hold_check, LONG_PRESS_TIME, self._async_hold_check
-            )
+        self._schedule(window)
         return True
 
     @callback
@@ -106,28 +119,28 @@ class ClickDetector:
         """Report a long press (once per hold), dropping counted presses."""
         if self._holding:
             return
-        self._stop_timers()
-        self._count = 0
-        self._may_be_held = False
+        self.cancel()
         self._holding = True
         self._on_click(CLICK_LONG)
 
     @callback
     def cancel(self) -> None:
         """Forget the current sequence without reporting it."""
-        self._stop_timers()
+        self._stop_timer()
         self._count = 0
         self._may_be_held = False
         self._window_closed_at = None
 
-    def _still_transmitting(self, now: float) -> bool:
-        return now - self._last_activity < HOLD_REPEAT_GAP
+    def _repeating(self, now: float) -> list[float]:
+        """Last-heard times of receivers still hearing this press repeat."""
+        return [
+            last
+            for first, last in self._heard.values()
+            if last > first and now - last < HOLD_REPEAT_GAP
+        ]
 
-    @callback
-    def _async_hold_check(self, _now: datetime) -> None:
-        self._cancel_hold_check = None
-        if self._continuous and self._still_transmitting(time.monotonic()):
-            self.long_press()
+    def _still_hearing(self, now: float) -> bool:
+        return bool(self._repeating(now))
 
     @callback
     def _async_window_closed(self, _now: datetime) -> None:
@@ -137,19 +150,14 @@ class ClickDetector:
             self._window_closed_at = now
 
         if (
-            self._cancel_hold_check is not None
-            and self._repeats
-            and self._still_transmitting(now)
+            self.tracks_activity
+            and self._still_hearing(now)
             and now - self._window_closed_at < HOLD_MAX_EXTRA_WAIT
         ):
-            # Repeating since the press and the long-press check hasn't run:
-            # it may be held. Wait for that check (or the button's own
-            # long-press flag), or for the repeats to stop.
-            self._cancel_window = self._restart(
-                None,
-                HOLD_REPEAT_GAP - (now - self._last_activity),
-                self._async_window_closed,
-            )
+            # A receiver still hears this press repeating: it may be held.
+            # Wait until it either reaches LONG_PRESS_TIME or goes quiet.
+            quiet_at = min(self._repeating(now)) + HOLD_REPEAT_GAP
+            self._schedule(max(quiet_at - now, _MIN_RECHECK))
             return
 
         count = self._count
@@ -157,20 +165,15 @@ class ClickDetector:
         if count:
             self._on_click(_CLICK_TYPE_BY_COUNT.get(count, CLICK_TRIPLE))
 
-    def _restart(
-        self,
-        cancel: CALLBACK_TYPE | None,
-        delay: float,
-        action: Callable[[datetime], None],
-    ) -> CALLBACK_TYPE:
-        if cancel is not None:
-            cancel()
-        return async_call_later(self._hass, delay, action)
+    @callback
+    def _schedule(self, delay: float) -> None:
+        self._stop_timer()
+        self._cancel_window = async_call_later(
+            self._hass, delay, self._async_window_closed
+        )
 
     @callback
-    def _stop_timers(self) -> None:
-        for cancel in (self._cancel_window, self._cancel_hold_check):
-            if cancel is not None:
-                cancel()
-        self._cancel_window = None
-        self._cancel_hold_check = None
+    def _stop_timer(self) -> None:
+        if self._cancel_window is not None:
+            self._cancel_window()
+            self._cancel_window = None

@@ -29,7 +29,10 @@ LONG_PRESS_TIME = 2.0
 # A gap longer than this between repeats means the button was released.
 HOLD_REPEAT_GAP = 1.0
 # Never wait longer than this past the window for a held button.
-HOLD_MAX_EXTRA_WAIT = 10.0
+HOLD_MAX_EXTRA_WAIT = 5.0
+# An advert whose content was already seen this recently is a late copy (e.g.
+# from a slower proxy), not a new press. Buttons without a profile only.
+RECENT_PAYLOAD_WINDOW = 3.0
 # Without per-advert tracking (HA < 2026.10), the click window for buttons
 # whose profile flags long presses is stretched past their long-press time
 # (~2.6 s for the Aqara / hs_counter profile).
@@ -37,7 +40,8 @@ LONG_PRESS_FALLBACK_WINDOW = 3.5
 DEFAULT_DISCOVERY_SECONDS = 8
 DUPLICATE_WINDOW_SECONDS = 0.15
 # A press counter that jumps further than this (button out of range, HA down)
-# counts as one press, not as a burst of missed ones.
+# counts as one press, not as a burst of missed ones. A counter that goes
+# backwards is a late copy from a slower proxy and is ignored.
 MAX_COUNTER_STEP = 5
 
 EVENT_BLE_BUTTON_PRESS = "ble_button_press"

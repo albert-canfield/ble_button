@@ -86,15 +86,37 @@ def get_device(hass: HomeAssistant, entry: MockConfigEntry) -> dr.DeviceEntry:
     return devices[0]
 
 
+_press_counter = 0
+
+
 def fake_service_info(
-    address: str = MAC, source: str = PROXY, rssi: int = -60, name: str = "Button"
+    address: str = MAC,
+    source: str = PROXY,
+    rssi: int = -60,
+    name: str = "Button",
+    manufacturer_data: dict[int, bytes] | None = None,
 ) -> Any:
     """Minimal stand-in for BluetoothServiceInfoBleak."""
-    return SimpleNamespace(address=address, source=source, rssi=rssi, name=name)
+    return SimpleNamespace(
+        address=address,
+        source=source,
+        rssi=rssi,
+        name=name,
+        manufacturer_data=manufacturer_data or {},
+        service_data={},
+    )
 
 
 def press(coordinator: BleButtonCoordinator, **kwargs: Any) -> None:
-    """Feed one advert straight into the coordinator's address-callback path."""
+    """Feed one advert straight into the coordinator's address-callback path.
+
+    Each call gets new advert content (as a real press would) unless
+    ``manufacturer_data`` is given.
+    """
+    global _press_counter  # noqa: PLW0603
+    if "manufacturer_data" not in kwargs:
+        _press_counter = (_press_counter + 1) % 256
+        kwargs["manufacturer_data"] = {0x1234: bytes([_press_counter])}
     coordinator._handle_service_info("address_callback", fake_service_info(**kwargs))
 
 
