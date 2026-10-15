@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Verify version and attach zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag must match the manifest version
+        run: |
+          version="$(jq -r .version custom_components/ble_button/manifest.json)"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} does not match manifest version ${version} (expected v${version})"
+            exit 1
+          fi
+      - name: Attach ble_button.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git archive --format=zip --prefix=ble_button/ -o ble_button.zip "HEAD:custom_components/ble_button"
+          gh release upload "${GITHUB_REF_NAME}" ble_button.zip --clobber

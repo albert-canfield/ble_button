@@ -1,5 +1,10 @@
 # Changelog
 
+All notable changes to BLE Button. Versions follow [Semantic Versioning](https://semver.org):
+**major** for changes that break existing setups (entity IDs, states, removed
+options, higher minimum Home Assistant), **minor** for new features, **patch**
+for fixes.
+
 ## 3.0.0
 
 ### ⚠️ Breaking changes
@@ -20,7 +25,7 @@
   Detection is brand-independent: presses are counted within a configurable
   window (default 2 s), and a button still transmitting 2 s after a press is a
   long press (HA 2026.10+).
-- Button profiles for known payload formats (first: `0x5348` "HS" counter),
+- Button profiles for known payload formats (first: Aqara BLE button, `0x5348`),
   which recover missed presses and use the button's own long-press flag.
 - *Button pressed* device trigger in the automation editor.
 - **Last pressed** timestamp sensor (restored after restart).
