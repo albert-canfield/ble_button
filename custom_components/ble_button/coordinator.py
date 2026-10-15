@@ -6,7 +6,8 @@ import asyncio
 import copy
 import logging
 import time
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -32,9 +33,28 @@ from .const import (
     EVENT_BLE_BUTTON_PRESS,
     MAX_COUNTER_STEP,
     MODE_MULTI_CLICK,
+    RECENT_PAYLOAD_WINDOW,
     SOURCE_ANY,
 )
 from .decoder import DecodedAdvert, decode
+
+
+def _fingerprint(service_info: Any) -> Hashable:
+    """Advert content, comparable across proxies."""
+    manufacturer_data = getattr(service_info, "manufacturer_data", None) or {}
+    service_data = getattr(service_info, "service_data", None) or {}
+    return (
+        tuple(sorted(manufacturer_data.items())),
+        tuple(sorted(service_data.items())),
+    )
+
+
+def _press_key(decoded: DecodedAdvert | None, fingerprint: Hashable) -> Hashable:
+    """What identifies the packets of one press: the profile's counter
+    (long-press flag packets included), else the advert content."""
+    if decoded is not None:
+        return ("counter", decoded.counter)
+    return ("payload", fingerprint)
 
 
 @dataclass
@@ -70,6 +90,7 @@ class BleButtonData:
     ignored_wrong_mac: int = 0
     ignored_wrong_source: int = 0
     ignored_duplicate: int = 0
+    ignored_late_copy: int = 0
 
     # Entity/debug counters
     entity_publish_count: int = 0
@@ -124,6 +145,10 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         self._replaying = False
         self._last_counter: int | None = None
         self._long_press_counter: int | None = None
+        # Advert content -> when it was last seen (late-copy detection).
+        self._recent_payloads: dict[Hashable, float] = {}
+        # Recent decisions, for diagnostics.
+        self.trace: deque[dict[str, Any]] = deque(maxlen=60)
         self._clicks = ClickDetector(hass, self.click_window, self._emit_click)
         self._click_listeners: set[Callable[[str], None]] = set()
 
@@ -215,12 +240,14 @@ class BleButtonCoordinator(DataUpdateCoordinator):
     @callback
     def _handle_every_advert(self, service_info: Any) -> None:
         """Note that the button is (still) transmitting, repeats included."""
-        if self.accepted_source != SOURCE_ANY and (
-            (getattr(service_info, "source", None) or "").upper()
-            not in ("", self.accepted_source)
-        ):
+        source = (getattr(service_info, "source", None) or "").upper()
+        if self.accepted_source != SOURCE_ANY and source not in ("", self.accepted_source):
             return
-        self._clicks.note_activity()
+        fingerprint = _fingerprint(service_info)
+        if fingerprint in self._recent_payloads:
+            self._recent_payloads[fingerprint] = time.monotonic()
+        decoded = decode(getattr(service_info, "manufacturer_data", None) or {})
+        self._clicks.note_activity(source, _press_key(decoded, fingerprint))
 
     @callback
     def _handle_service_info(self, path: str, service_info: Any) -> None:
@@ -256,6 +283,7 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             rssi=rssi,
             name=name,
             decoded=decoded,
+            fingerprint=_fingerprint(service_info),
         )
 
     def _process_advert(
@@ -267,6 +295,7 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         rssi: int | None,
         name: str | None,
         decoded: DecodedAdvert | None = None,
+        fingerprint: Hashable = None,
     ) -> None:
         """Process one advertisement from any listener path."""
         now = datetime.now(timezone.utc).isoformat()
@@ -306,36 +335,59 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             )
             return
 
+        now_mono = time.monotonic()
+        seen_at = self._recent_payloads.get(fingerprint)
+        self._recent_payloads[fingerprint] = now_mono
+        self._prune_recent_payloads(now_mono)
+        seen_recently = seen_at is not None and now_mono - seen_at < RECENT_PAYLOAD_WINDOW
+
+        late_copy = False
         if decoded is not None:
-            presses, long_press = self._decoded_presses(decoded)
+            presses, long_press, late_copy = self._decoded_presses(decoded, seen_recently)
             data.protocol = decoded.protocol
-            data.last_counter = decoded.counter
+            data.last_counter = self._last_counter
         else:
-            now_mono = time.monotonic()
-            if now_mono - self._last_accept_monotonic < DUPLICATE_WINDOW_SECONDS:
+            if seen_at is not None and now_mono - seen_at < DUPLICATE_WINDOW_SECONDS:
+                presses = 0  # same advert via the other listener path
+            elif seen_recently:
+                presses, late_copy = 0, True
+            elif now_mono - self._last_accept_monotonic < DUPLICATE_WINDOW_SECONDS:
                 presses = 0
             else:
                 self._last_accept_monotonic = now_mono
                 presses = 1
             long_press = False
 
+        decision = "press"
         if self.multi_click:
             if long_press:
                 self._clicks.long_press()
             elif presses and not self._clicks.press(
                 presses,
+                _press_key(decoded, fingerprint),
+                seen_source,
                 certain=decoded is not None,
                 may_be_held=decoded is not None,
             ):
-                presses = 0  # payload changed while the button is held
+                presses, decision = 0, "change_while_held"
 
         if not presses:
-            # Repeat of a press already handled, or only its long-press flag.
-            if not long_press:
+            # Repeat or late copy of a press already handled, a change while
+            # held, or only the long-press flag.
+            if long_press:
+                decision = "long_press_flag"
+            elif late_copy:
+                decision = "late_copy"
+                data.ignored_late_copy += 1
+            elif decision == "press":
+                decision = "duplicate"
                 data.ignored_duplicate += 1
+            self._trace(decision, seen_source, decoded, rssi)
             self._publish(data)
-            self._fire_debug(data, "long_press" if long_press else "ignored_duplicate")
+            self._fire_debug(data, decision)
             return
+
+        self._trace("press", seen_source, decoded, rssi, presses=presses)
 
         # A press while still "on" is published as off -> on so state
         # triggers fire for every press.
@@ -387,14 +439,25 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             name=f"ble_button reset {self.address}",
         )
 
-    def _decoded_presses(self, decoded: DecodedAdvert) -> tuple[int, bool]:
-        """Return (new presses, new long press) from a decoded advert."""
+    def _decoded_presses(
+        self, decoded: DecodedAdvert, seen_recently: bool
+    ) -> tuple[int, bool, bool]:
+        """Return (new presses, new long press, late copy) for a decoded advert."""
         if self._last_counter is None:
-            presses = 1
+            step = 1
         else:
-            presses = (decoded.counter - self._last_counter) % 256
-            if presses > MAX_COUNTER_STEP:
-                presses = 1
+            step = (decoded.counter - self._last_counter) % 256
+            if step > 128 and seen_recently:
+                # Counter went backwards to a packet just seen: a late copy
+                # from a slower proxy.
+                return 0, False, True
+            if step > MAX_COUNTER_STEP:
+                # Big jump or reset (e.g. new battery): one press, resync.
+                step = 1
+        if step > 1 and not self._clicks.counting:
+            # Missed presses belong to a sequence already reported; this is
+            # the first press of a new one.
+            step = 1
         self._last_counter = decoded.counter
 
         long_press = (
@@ -402,7 +465,35 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         )
         if long_press:
             self._long_press_counter = decoded.counter
-        return presses, long_press
+        return step, long_press, False
+
+    def _prune_recent_payloads(self, now: float) -> None:
+        if len(self._recent_payloads) > 32:
+            self._recent_payloads = {
+                key: seen
+                for key, seen in self._recent_payloads.items()
+                if now - seen < RECENT_PAYLOAD_WINDOW
+            }
+
+    def _trace(
+        self,
+        decision: str,
+        source: str,
+        decoded: DecodedAdvert | None,
+        rssi: int | None,
+        **extra: Any,
+    ) -> None:
+        self.trace.append(
+            {
+                "t": round(time.monotonic(), 3),
+                "decision": decision,
+                "source": source,
+                "rssi": rssi,
+                "counter": decoded.counter if decoded else None,
+                "long_flag": decoded.long_press if decoded else None,
+                **extra,
+            }
+        )
 
     @callback
     def _emit_click(self, click_type: str) -> None:
@@ -411,6 +502,13 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         data.last_click_type = click_type
         data.click_count += 1
         self.data = data
+        self.trace.append(
+            {
+                "t": round(time.monotonic(), 3),
+                "click": click_type,
+                "heard_for": self._clicks.spans,
+            }
+        )
 
         self.hass.bus.async_fire(
             EVENT_BLE_BUTTON_CLICK,

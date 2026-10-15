@@ -209,7 +209,8 @@ BLE Button is **brand-independent**: it doesn't need to understand the advertise
 
 - **A press** is an advertisement from the button's MAC (optionally only via one adapter/proxy) whose content changed. Most buttons change something per press, such as a counter. Home Assistant hides the identical repeats a button sends for each press, and repeats within 150 ms count once.
 - **Multi-click:** presses are counted until the button stays quiet for the multi-click window: 1 = single, 2 = double, 3 or more = triple.
-- **Long press:** many buttons keep re-sending their packet while held. If the button is still transmitting **2 s** after a press, that's a long press. It's reported while you're still holding, and anything the button sends during the hold isn't counted as another press. This needs Home Assistant **2026.10+**, which exposes those repeats to integrations.
+- **Long press:** many buttons keep re-sending their packet while held. If one adapter/proxy hears the press's packet repeating for **2 s**, that's a long press. It's reported while you're still holding, and anything the button sends during the hold isn't counted as another press. This needs Home Assistant **2026.10+**, which exposes those repeats to integrations.
+- **Several proxies:** each proxy is measured on its own, and late copies of a packet from a slower proxy are recognised, so having more proxies never adds presses or turns clicks into long presses.
 
 **Button profiles** add accuracy for payload formats the integration recognises, on top of the generic rules. Currently there is one: the **Aqara BLE button** (manufacturer data `0x5348`). Its per-press counter recovers presses a proxy missed, and its own long-press flag also works on older Home Assistant. Unknown buttons simply use the generic rules. If you'd like your button to get a profile, open an issue with a diagnostics download.
 
