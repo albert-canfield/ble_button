@@ -39,3 +39,16 @@ jobs:
           cache-dependency-path: requirements_test.txt
       - run: pip install -r requirements_test.txt
       - run: pytest
+
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: CHANGELOG has an entry for the manifest version
+        run: |
+          version="$(jq -r .version custom_components/ble_button/manifest.json)"
+          if ! grep -qx "## ${version}" CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::Add a '## ${version}' entry for manifest version ${version}"
+            exit 1
+          fi

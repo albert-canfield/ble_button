@@ -22,7 +22,8 @@ class DecodedAdvert:
     long_press: bool
 
 
-# Manufacturer ID 0x5348 ("HS"), 14-byte payload, captured from a real button:
+# Aqara BLE button. Manufacturer ID 0x5348 ("HS"), 14-byte payload, captured
+# from a real button:
 #
 #   43 58 | 33 59 aa 38 c1 a4 | 0b | 14 | 01 00 00 | 34
 #   "CX"  | MAC, reversed      | ?  | flags         | press counter
