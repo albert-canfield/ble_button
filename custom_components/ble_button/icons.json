@@ -1,0 +1,17 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "press": {
+        "default": "mdi:gesture-tap-button",
+        "state": {
+          "on": "mdi:gesture-tap"
+        }
+      }
+    },
+    "sensor": {
+      "last_pressed": {
+        "default": "mdi:gesture-tap"
+      }
+    }
+  }
+}

@@ -60,5 +60,25 @@
       "invalid_source": "Invalid adapter/source MAC address.",
       "invalid_reset_delay": "Press visible time must be greater than 0."
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "press": {
+        "state": {
+          "off": "Not pressed",
+          "on": "Pressed"
+        }
+      }
+    },
+    "sensor": {
+      "last_pressed": {
+        "name": "Last pressed"
+      }
+    }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "press": "Button pressed"
+    }
   }
 }

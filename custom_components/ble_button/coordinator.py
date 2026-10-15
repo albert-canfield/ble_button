@@ -13,17 +13,17 @@ from typing import Any
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     CONF_PRESS_RESET_DELAY,
     DEFAULT_PRESS_RESET_DELAY,
     DUPLICATE_WINDOW_SECONDS,
+    DOMAIN,
     EVENT_BLE_BUTTON_DEBUG,
     EVENT_BLE_BUTTON_PRESS,
     SOURCE_ANY,
-    STATE_NONE,
-    STATE_PRESS,
 )
 
 
@@ -31,7 +31,7 @@ from .const import (
 class BleButtonData:
     """Runtime/debug data for one BLE button."""
 
-    state: str = STATE_NONE
+    pressed: bool = False
 
     last_seen: str | None = None
     last_press_time: str | None = None
@@ -47,7 +47,6 @@ class BleButtonData:
     # Listener-path counters
     broad_callback_hits: int = 0
     address_callback_hits: int = 0
-    shared_scanner_hits: int = 0
 
     # Match/decision counters
     matching_mac_seen: int = 0
@@ -64,13 +63,12 @@ class BleButtonData:
 class BleButtonCoordinator(DataUpdateCoordinator):
     """Debug coordinator for BLE advertisements.
 
-    It registers THREE listening paths simultaneously:
+    It registers two listening paths simultaneously:
     1. HA Bluetooth broad callback
-    2. HA Bluetooth exact address callback
-    3. Shared BleakScanner detection callback
+    2. HA Bluetooth exact address callback (connectable or not)
 
     Payload is ignored. Any matching MAC/source advert becomes:
-    none -> press -> none
+    off -> on -> off
 
     The debug attributes show which listener path is actually receiving data.
     """
@@ -83,7 +81,12 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         address: str,
         accepted_source: str,
     ) -> None:
-        super().__init__(hass=hass, logger=logger, name=f"BLE Button {entry.entry_id}")
+        super().__init__(
+            hass=hass,
+            logger=logger,
+            config_entry=entry,
+            name=f"BLE Button {entry.entry_id}",
+        )
 
         self.entry = entry
         self.address = address.upper()
@@ -97,6 +100,7 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         self.data = BleButtonData()
         self._reset_task: asyncio.Task | None = None
         self._last_accept_monotonic = 0.0
+        self._replaying = False
 
     def _publish(self, data: BleButtonData) -> None:
         data.entity_publish_count += 1
@@ -114,6 +118,9 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         def _address_callback(service_info, change) -> None:
             self._handle_service_info("address_callback", service_info)
 
+        # HA replays cached adverts to new callbacks synchronously inside
+        # async_register_callback; those are not presses.
+        self._replaying = True
         unload_callbacks.append(
             bluetooth.async_register_callback(
                 self.hass,
@@ -131,29 +138,13 @@ class BleButtonCoordinator(DataUpdateCoordinator):
                 bluetooth.BluetoothScanningMode.ACTIVE,
             )
         )
+        self._replaying = False
 
-        # Also try the shared scanner path, if supported.
-        try:
-            scanner = bluetooth.async_get_scanner(self.hass)
-
-            def _scanner_callback(device, advertisement_data) -> None:
-                self.hass.loop.call_soon_threadsafe(
-                    self._handle_scanner_advertisement,
-                    device,
-                    advertisement_data,
-                )
-
-            unload_callbacks.append(scanner.register_detection_callback(_scanner_callback))
-            scanner_status = "registered"
-        except Exception as err:  # noqa: BLE001
-            scanner_status = f"failed: {err}"
-
-        self.logger.warning(
-            "BLE Button DEBUG listeners registered: name=%s mac=%s source=%s shared_scanner=%s",
+        self.logger.debug(
+            "BLE Button listeners registered: name=%s mac=%s source=%s",
             self.entry.title,
             self.address,
             self.accepted_source,
-            scanner_status,
         )
 
         def _unload() -> None:
@@ -170,6 +161,8 @@ class BleButtonCoordinator(DataUpdateCoordinator):
     @callback
     def _handle_service_info(self, path: str, service_info: Any) -> None:
         """Handle Home Assistant BluetoothServiceInfoBleak."""
+        if self._replaying:
+            return
         data: BleButtonData = copy.deepcopy(self.data or BleButtonData())
 
         if path == "broad_callback":
@@ -191,27 +184,6 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             name=name,
         )
 
-    def _handle_scanner_advertisement(self, device: Any, advertisement_data: Any) -> None:
-        """Handle shared scanner callback."""
-        data: BleButtonData = copy.deepcopy(self.data or BleButtonData())
-        data.shared_scanner_hits += 1
-
-        seen_address = (getattr(device, "address", "") or "").upper()
-        seen_source = self._extract_source(device, advertisement_data) or ""
-        name = getattr(advertisement_data, "local_name", None) or getattr(device, "name", None)
-        rssi = getattr(advertisement_data, "rssi", None)
-        if rssi is None:
-            rssi = getattr(device, "rssi", None)
-
-        self._process_advert(
-            data=data,
-            path="shared_scanner",
-            seen_address=seen_address,
-            seen_source=seen_source,
-            rssi=rssi,
-            name=name,
-        )
-
     def _process_advert(
         self,
         data: BleButtonData,
@@ -225,23 +197,10 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         now = datetime.now(timezone.utc).isoformat()
 
         if seen_address != self.address:
+            # Counted silently; publishing here would write a recorder row for
+            # unrelated nearby BLE traffic. Counters show on the next press.
             data.ignored_wrong_mac += 1
-            # Publish occasionally so the user knows listeners are alive.
-            total_hits = (
-                data.broad_callback_hits
-                + data.address_callback_hits
-                + data.shared_scanner_hits
-            )
-            if total_hits % 100 == 0:
-                data.last_path = path
-                data.last_seen_address = seen_address
-                data.last_source = seen_source
-                data.last_rssi = rssi
-                data.last_name = name
-                data.last_seen = now
-                self._publish(data)
-            else:
-                self.data = data
+            self.data = data
             return
 
         data.matching_mac_seen += 1
@@ -261,8 +220,8 @@ class BleButtonCoordinator(DataUpdateCoordinator):
             data.ignored_wrong_source += 1
             self._publish(data)
             self._fire_debug(data, "ignored_wrong_source")
-            self.logger.warning(
-                "BLE Button DEBUG ignored source: path=%s name=%s mac=%s configured_source=%s seen_source=%s rssi=%s",
+            self.logger.debug(
+                "BLE Button ignored source: path=%s name=%s mac=%s configured_source=%s seen_source=%s rssi=%s",
                 path,
                 self.entry.title,
                 self.address,
@@ -281,19 +240,26 @@ class BleButtonCoordinator(DataUpdateCoordinator):
 
         self._last_accept_monotonic = now_mono
 
-        if data.state != STATE_NONE:
-            data.state = STATE_NONE
+        # A press while still "on" is published as off -> on so state
+        # triggers fire for every press.
+        if data.pressed:
+            data.pressed = False
             self._publish(data)
 
-        data.state = STATE_PRESS
+        data.pressed = True
         data.accepted_adverts_seen += 1
         data.press_count += 1
         data.press_id += 1
         data.last_press_time = now
 
+        devices = dr.async_entries_for_config_entry(
+            dr.async_get(self.hass), self.entry.entry_id
+        )
+        device = devices[0] if devices else None
         self.hass.bus.async_fire(
             EVENT_BLE_BUTTON_PRESS,
             {
+                "device_id": device.id if device else None,
                 "name": self.entry.title,
                 "mac": self.address,
                 "accepted_source": self.accepted_source,
@@ -307,8 +273,8 @@ class BleButtonCoordinator(DataUpdateCoordinator):
 
         self._fire_debug(data, "accepted_press")
 
-        self.logger.warning(
-            "BLE Button DEBUG accepted press: path=%s name=%s mac=%s source=%s rssi=%s press_id=%s",
+        self.logger.debug(
+            "BLE Button accepted press: path=%s name=%s mac=%s source=%s rssi=%s press_id=%s",
             path,
             self.entry.title,
             self.address,
@@ -322,8 +288,10 @@ class BleButtonCoordinator(DataUpdateCoordinator):
 
         self._publish(data)
 
-        self._reset_task = self.hass.loop.create_task(
-            self._async_reset_state(data.press_id)
+        self._reset_task = self.entry.async_create_background_task(
+            self.hass,
+            self._async_reset_state(data.press_id),
+            name=f"ble_button reset {self.address}",
         )
 
     def _fire_debug(self, data: BleButtonData, decision: str) -> None:
@@ -334,7 +302,7 @@ class BleButtonCoordinator(DataUpdateCoordinator):
                 "name": self.entry.title,
                 "mac": self.address,
                 "decision": decision,
-                "state": data.state,
+                "state": "on" if data.pressed else "off",
                 "last_path": data.last_path,
                 "last_source": data.last_source,
                 "last_rssi": data.last_rssi,
@@ -346,12 +314,11 @@ class BleButtonCoordinator(DataUpdateCoordinator):
                 "ignored_duplicate": data.ignored_duplicate,
                 "broad_callback_hits": data.broad_callback_hits,
                 "address_callback_hits": data.address_callback_hits,
-                "shared_scanner_hits": data.shared_scanner_hits,
             },
         )
 
     async def _async_reset_state(self, press_id: int) -> None:
-        """Reset state to none after pulse."""
+        """Reset state to off after pulse."""
         try:
             await asyncio.sleep(self.press_reset_delay)
         except asyncio.CancelledError:
@@ -362,25 +329,5 @@ class BleButtonCoordinator(DataUpdateCoordinator):
         if data.press_id != press_id:
             return
 
-        data.state = STATE_NONE
+        data.pressed = False
         self._publish(data)
-
-    def _extract_source(self, device: Any, advertisement_data: Any) -> str | None:
-        for obj in (device, advertisement_data):
-            source = getattr(obj, "source", None)
-            if source:
-                return str(source).upper()
-
-        details = getattr(device, "details", None)
-        if isinstance(details, dict):
-            for key in ("source", "adapter", "scanner", "scanner_source"):
-                if details.get(key):
-                    return str(details[key]).upper()
-
-        metadata = getattr(device, "metadata", None)
-        if isinstance(metadata, dict):
-            for key in ("source", "adapter", "scanner", "scanner_source"):
-                if metadata.get(key):
-                    return str(metadata[key]).upper()
-
-        return None
