@@ -118,8 +118,9 @@ async def test_invalid_trigger_type_rejected(
         },
     )
     await hass.async_block_till_done()
+    # Wording after the list differs between HA versions.
     assert (
-        "value must be one of ['double', 'long', 'press', 'single', 'triple'] at 'type'"
+        "value must be one of ['double', 'long', 'press', 'single', 'triple']"
         in caplog.text
     )
     state = hass.states.get("automation.unnamed_automation")

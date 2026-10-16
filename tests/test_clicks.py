@@ -27,11 +27,13 @@ from custom_components.ble_button.decoder import decode
 
 from . import (
     CLICK_ID,
+    HAS_EVERY_ADVERT,
     MAC,
     OTHER_PROXY,
     PROXY,
     get_device,
     inject_advertisement,
+    requires_every_advert,
     setup_entry,
 )
 
@@ -135,7 +137,7 @@ async def test_real_capture_gives_expected_clicks(
 ) -> None:
     """The user's real press pattern, replayed through HA's Bluetooth stack."""
     coordinator = await setup_entry(hass, multi_click_entry)
-    assert coordinator._clicks.tracks_activity  # HA 2026.10+ API in use
+    assert coordinator._clicks.tracks_activity is HAS_EVERY_ADVERT
 
     await replay(hass, Clock(hass, freezer), REAL_CAPTURE)
 
@@ -154,7 +156,9 @@ async def test_real_capture_without_activity_tracking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """HA < 2026.10: the window stretches so a hold isn't a single click."""
-    monkeypatch.delattr(bluetooth, "async_register_advertisement_callback")
+    monkeypatch.delattr(
+        bluetooth, "async_register_advertisement_callback", raising=False
+    )
     coordinator = await setup_entry(hass, multi_click_entry)
     assert not coordinator._clicks.tracks_activity
 
@@ -172,7 +176,7 @@ async def test_single_click_is_reported_after_the_window(
     await setup_entry(hass, multi_click_entry)
     clock = Clock(hass, freezer)
 
-    inject_advertisement(manufacturer_data=hs_payload(1))
+    inject_advertisement(manufacturer_data={0x1234: b"\x01"})
     await hass.async_block_till_done()
     await clock.advance_to(1.9)
     assert click_events == []
@@ -203,6 +207,7 @@ async def test_held_profile_button_long_press_once(
     assert [e.data["click_type"] for e in click_events] == ["long"]
 
 
+@requires_every_advert
 async def test_generic_held_button_long_press(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
@@ -226,6 +231,7 @@ async def test_generic_held_button_long_press(
     assert [e.data["click_type"] for e in click_events] == ["long"]
 
 
+@requires_every_advert
 async def test_real_capture_without_profile(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
@@ -436,6 +442,8 @@ async def test_slow_proxy_does_not_change_clicks(
 ) -> None:
     """Regression (v3.0.0 in a real home): late copies from a second proxy
     turned clicks into long presses and doubles into triples."""
+    if not profile and not HAS_EVERY_ADVERT:
+        pytest.skip("generic long press needs HA 2026.10+ per-advert callback")
     if not profile:
         monkeypatch.setattr(
             "custom_components.ble_button.coordinator.decode", lambda _data: None
@@ -449,6 +457,7 @@ async def test_slow_proxy_does_not_change_clicks(
     assert [e.data["click_type"] for e in click_events] == EXPECTED_REAL_CLICKS
 
 
+@requires_every_advert  # gestures 3.3 s apart need the 2 s window, not the fallback
 @pytest.mark.parametrize("lag", [0.0, 0.7])
 async def test_capture_2_doubles_triples_and_hold(
     hass: HomeAssistant,

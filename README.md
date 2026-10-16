@@ -248,7 +248,7 @@ pip install -r requirements_test.txt
 pytest
 ```
 
-CI runs Home Assistant's `hassfest`, the HACS validator and the test suite on every push.
+CI runs Home Assistant's `hassfest`, the HACS validator and the test suite on every push. The tests run twice: on the current Home Assistant (`requirements_test.txt`) and on the oldest supported one, 2025.1 (`.github/requirements-min-ha.txt`).
 
 ## License
 
