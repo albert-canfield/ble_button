@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
 from habluetooth import BluetoothServiceInfoBleak, get_manager
 
+from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
@@ -26,6 +30,17 @@ from custom_components.ble_button.const import (
     SOURCE_ANY,
 )
 from custom_components.ble_button.coordinator import BleButtonCoordinator
+
+# HA 2026.10+ reports every advert (identical repeats included) to
+# integrations; older HA falls back (no generic long press). Tests of features
+# that need it are skipped on older HA (see the minimum-version CI job).
+HAS_EVERY_ADVERT = hasattr(bluetooth, "async_register_advertisement_callback")
+requires_every_advert = pytest.mark.skipif(
+    not HAS_EVERY_ADVERT, reason="needs HA 2026.10+ per-advert callback"
+)
+
+# bleak < 1.0 (HA <= 2025.x) still takes rssi in BLEDevice().
+_BLEDEVICE_TAKES_RSSI = "rssi" in inspect.signature(BLEDevice.__init__).parameters
 
 BUTTON_NAME = "Desk Button"
 MAC = "AA:BB:CC:DD:EE:FF"
@@ -140,7 +155,10 @@ def inject_advertisement(
         rssi=rssi,
         platform_data=(),
     )
-    device = BLEDevice(address, name, {"source": source})
+    if _BLEDEVICE_TAKES_RSSI:
+        device = BLEDevice(address, name, {"source": source}, rssi)
+    else:
+        device = BLEDevice(address, name, {"source": source})
     get_manager().scanner_adv_received(
         BluetoothServiceInfoBleak(
             name=name,

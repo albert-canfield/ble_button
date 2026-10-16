@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # requirements_test.txt: test against the current Home Assistant. The
+  # minimum-version pins in .github/requirements-min-ha.txt are not tracked.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      test-requirements:
+        patterns: ["*"]
