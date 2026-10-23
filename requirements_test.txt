@@ -3,11 +3,11 @@
 #
 # phcc pins the matching Home Assistant core (homeassistant==2026.10.1),
 # pytest, pytest-asyncio, freezer, socket guard, etc.
-pytest-homeassistant-custom-component==0.13.372
+pytest-homeassistant-custom-component==0.13.373
 
 # Requirements of HA's bluetooth -> usb dependency chain that the
 # homeassistant package does not install by itself (versions from the
 # bluetooth/usb manifests in homeassistant 2026.10.1).
 aiousbwatcher==1.1.2
-serialx==1.11.0
+serialx==1.14.0
 dbus-fast==5.2.0
